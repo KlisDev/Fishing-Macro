@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+debug/
+*.mkv
+*.mp4
+.deps_installed
+config.json
