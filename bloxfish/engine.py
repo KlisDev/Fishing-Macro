@@ -149,6 +149,31 @@ class FishingEngine:
         return charge_meter_score(self.screen.grab(self.meter_roi))
 
     # -- states ------------------------------------------------------------
+    def _minigame_running(self) -> bool:
+        """Independent check that a reel minigame is on screen.
+
+        Deliberately does not use `find_bar`. That looks for the green zone
+        first, and the player's health bar is also green and also inside the
+        search region - so on some layouts it locks onto the health bar and
+        reports no minigame for an entire fight. This looks only for the
+        progress strip, which nothing else on screen resembles.
+
+        This is the guard that makes "cast while a fish is still on the line"
+        impossible, whatever the bar detector happens to be doing.
+        """
+        try:
+            img = self.screen.grab(self.bar_search)
+            from .vision import progress_track_mask, _row_span
+            pt = progress_track_mask(img)
+            need = img.shape[1] * self.cfg.detection.bar_min_width_frac
+            for y in range(0, pt.shape[0], 2):
+                run = _row_span(pt[y])
+                if run and (run[1] - run[0]) >= need:
+                    return True
+        except Exception:                              # noqa: BLE001
+            pass
+        return False
+
     def _do_cast(self) -> bool:
         """Charge and release, verifying the cast actually took.
 
@@ -162,6 +187,17 @@ class FishingEngine:
         self.state = State.IDLE
         t = self.cfg.timing
         attempts = t.max_cast_attempts if t.verify_cast else 1
+
+        # Never cast into a live minigame. If the bar detector has lost the bar
+        # for any reason, casting here is the "forgot it was fishing" symptom;
+        # waiting costs nothing, because a real fight ends on its own.
+        if self._minigame_running():
+            self.log("[cast] a minigame is still running — not casting")
+            deadline = time.perf_counter() + t.max_reel_seconds
+            while (self._alive() and time.perf_counter() < deadline
+                   and self._minigame_running()):
+                time.sleep(0.1)
+            return False
 
         for attempt in range(1, attempts + 1):
             self.mouse.press()

@@ -136,7 +136,10 @@ class Timing:
     # With the marker sometimes visible for only ~50 ms, a second confirmation
     # can cost more than it protects. Fast mode acts on the first sighting.
     fast_bite_confirm: int = 1
-    bite_to_bar_timeout: float = 3.0  # bar should appear ~0.73 s after the click
+    # Bar should appear ~0.73 s after the bite click. The generous ceiling is
+    # deliberate: giving up here means casting while a fish is still on the
+    # line, which is far worse than waiting a moment longer.
+    bite_to_bar_timeout: float = 5.0
 
     max_wait_for_bite: float = 30.0  # user reports up to 20 s; give margin
 
@@ -192,7 +195,10 @@ class Detection:
     # look-alikes: green terrain plus yellow HUD buttons can otherwise satisfy
     # the colour tests and produce a "bar" 0.22-0.83 of the window wide, which
     # would send the engine into a phantom minigame and fire stray clicks.
-    bar_min_width_frac: float = 0.40
+    # The progress strip animates in, so for the first second of a minigame the
+    # track measures narrower than its settled 0.46. Too high a floor makes the
+    # bot wait out the animation - or miss the bar entirely on a laggy machine.
+    bar_min_width_frac: float = 0.33
     bar_max_width_frac: float = 0.55
 
     # Bite marker search window, as fractions of the game window. A tight box

@@ -709,6 +709,47 @@ The zone-edge reconstruction in `read_bar` now treats **either** the fish or the
 chest as the occluder, since either can straddle an end of the zone and make it
 read short.
 
+### The real cause: find_bar locked onto the health bar
+
+Everything below this heading was a symptom. The cause was in `find_bar`.
+
+It located the bar by taking the **largest green blob** in the search region.
+The player's **health bar** is also green, also wide, and also sits inside that
+region - so on many layouts it is the largest green blob on screen. `find_bar`
+locked onto it, scanned the rows beneath it for a progress strip, found nothing,
+and reported "no minigame" for the entire fight.
+
+Measured on a user capture (854x480): `find_bar` succeeded on **5 of 220
+frames** - and only on the frames where the reel zone happened to be
+momentarily larger than the health bar:
+
+```
+qualifying green blobs at fr70
+  x16  y176  164x26  area 2140   <- health bar  (picked: largest)
+  (reel zone not even in the running)
+scanning rows under it -> no progress strip -> rejected
+```
+
+That is why the bug followed some machines and not others, and why every
+threshold fix only moved it around: on the author's layout the zone won the
+size contest, so it never reproduced there.
+
+The fix is structural: **try every green candidate, not just the biggest**, and
+let the progress strip underneath decide which one is really the bar. Same
+capture afterwards: bar acquired once, then **132 frames tracked continuously,
+0 % fish loss, 0 premature ends**.
+
+Two supporting changes:
+
+* `_row_span` replaces "longest contiguous run" when measuring the progress
+  strip. On a compressed or downscaled capture the strip breaks into fragments,
+  and the largest fragment alone falls under the width threshold.
+* `_minigame_running()` is an independent witness used before every cast. It
+  looks **only** for the progress strip - never the zone - so even if the bar
+  detector fails again for some new reason, the bot cannot cast into a live
+  minigame. Verified it does not fire on a blank screen or on a health bar
+  alone.
+
 ### "Forgot it was fishing" — a 100 ms gap was enough
 
 The real structural fault, found after several rounds of adding witnesses. The

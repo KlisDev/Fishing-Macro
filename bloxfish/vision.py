@@ -201,6 +201,40 @@ def progress_bar_present(img: np.ndarray, min_w_frac: float = 0.5) -> bool:
     return False
 
 
+def _row_span(mask_row: np.ndarray, max_gap: int = 8,
+              min_fill: float = 0.55):
+    """Extent of a row's True pixels, tolerating small gaps.
+
+    Deliberately *not* "the longest unbroken run". The progress strip is one
+    solid two-tone bar in a clean high-resolution capture, but on a smaller
+    window, a different UI scale, or anything that has been through video
+    compression, it breaks into pieces. Requiring one contiguous run then
+    measures only the largest fragment, that falls under the width threshold,
+    and the bar is never located at all - which is what left the bot casting in
+    the middle of a fight.
+
+    Pixels no more than `max_gap` apart count as the same bar. A group only
+    counts if it is at least `min_fill` solid, so scattered specks across the
+    row cannot merge into one huge false span.
+    """
+    xs = np.flatnonzero(mask_row)
+    if len(xs) < 2:
+        return None
+    breaks = np.flatnonzero(np.diff(xs) > max_gap)
+    starts = np.concatenate(([0], breaks + 1))
+    ends = np.concatenate((breaks, [len(xs) - 1]))
+    best = None
+    for a_i, b_i in zip(starts, ends):
+        a, b = int(xs[a_i]), int(xs[b_i])
+        width = b - a
+        if width <= 0:
+            continue
+        fill = (b_i - a_i + 1) / float(width + 1)
+        if fill >= min_fill and (best is None or width > best[1] - best[0]):
+            best = (a, b)
+    return best
+
+
 def _longest_run(mask_row: np.ndarray):
     """(start, end) of the longest True run in a 1-D bool array, or None."""
     if not mask_row.any():
@@ -218,99 +252,110 @@ def find_bar(img: np.ndarray, origin: tuple[int, int],
 
     Two-step, because neither cue alone is enough:
 
-      1. The green zone `(16,150,21)` is a colour nothing else on screen uses.
-         In the reference recording the biggest non-minigame blob of it is 168
-         px; during a minigame it is >14000. That gives us the vertical band and
-         proves a minigame is up.
-      2. The track's *width* then comes from the progress bar underneath, which
-         is one unbroken green run spanning exactly the track. The playfield row
-         itself is useless for this: the fish sprite and the zone's anti-aliased
-         edges chop it into fragments.
+      1. A green blob gives a candidate vertical band.
+      2. A progress bar directly underneath it confirms the band really is the
+         reel bar, and gives the track's width. The playfield row itself is
+         useless for width: the fish sprite and the zone's anti-aliased edges
+         chop it into fragments.
+
+    **Every** green candidate is tried, not just the biggest one. That matters:
+    the player's health bar is green, wide and sits inside the search region, so
+    on many layouts it is the largest green blob on screen. Picking by size
+    alone locked onto the health bar, found no progress strip beneath it, and
+    reported "no minigame" for the entire fight - which left the bot casting
+    while a fish was still on the line. The progress strip underneath is the
+    thing that actually identifies the bar, so it decides.
 
     `origin` is the absolute (left, top) of `img`, so the result is in screen
     coordinates. Returns None when no bar is on screen.
     """
     h, w = img.shape[:2]
     min_w = int(w * det.bar_min_width_frac)
+    max_w = int(w * det.bar_max_width_frac)
 
     zone = zone_mask(img, colors).astype(np.uint8)
     n, _lbl, stats, _cent = cv2.connectedComponentsWithStats(zone, 8)
-    # The fish tile splits the zone in two, so collect every tall blob.
     parts = [stats[i] for i in range(1, n)
              if stats[i, cv2.CC_STAT_HEIGHT] >= 20 and stats[i, cv2.CC_STAT_AREA] >= 800]
     if not parts:
         return None
 
-    tallest = max(parts, key=lambda s: s[cv2.CC_STAT_AREA])
-    band_top = int(tallest[cv2.CC_STAT_TOP])
-    band_bot = band_top + int(tallest[cv2.CC_STAT_HEIGHT])
-
-    # Keep only blobs sitting in the same band (drops the progress bar and any
-    # stray green UI elsewhere on screen).
-    same_band = [s for s in parts
-                 if abs(int(s[cv2.CC_STAT_TOP]) - band_top) < 12
-                 and abs(int(s[cv2.CC_STAT_HEIGHT]) - int(tallest[cv2.CC_STAT_HEIGHT])) < 12]
-    zone_l = min(int(s[cv2.CC_STAT_LEFT]) for s in same_band)
-    zone_r = max(int(s[cv2.CC_STAT_LEFT]) + int(s[cv2.CC_STAT_WIDTH]) for s in same_band)
-
-    # Trim the rounded corners / 1px border off the band.
-    y_top, y_bot = band_top + 3, band_bot - 3
-    if y_bot - y_top < 6:
-        return None
-
-    # Progress bar: scan the rows just under the band for the longest green run.
     ptrack = progress_track_mask(img)
-    best_run, best_y = None, None
-    for y in range(band_bot + 1, min(h, band_bot + int((band_bot - band_top) * 0.9))):
-        run = _longest_run(ptrack[y])
-        if run and (best_run is None or (run[1] - run[0]) > (best_run[1] - best_run[0])):
-            best_run, best_y = run, y
+    tmask = track_mask(img, colors)
+    fmask = fish_mask(img, colors)
 
-    if best_run is not None and (best_run[1] - best_run[0]) >= min_w:
-        x0, x1 = best_run
-        prog_rows = [y for y in range(band_bot + 1, min(h, band_bot + 40))
-                     if ptrack[y, x0:x1].mean() > 0.9]
-    else:
-        # No progress bar visible (mid fade-in). Fall back to the dark track on
-        # the band's centre row, which is at least contiguous outside the zone.
-        mid = (y_top + y_bot) // 2
-        barish = zone.astype(bool) | track_mask(img, colors) | fish_mask(img, colors)
-        run = _longest_run(barish[mid])
-        if not run or (run[1] - run[0]) < min_w:
-            return None
-        x0, x1 = run
-        prog_rows = []
+    # Try each candidate band, biggest first. The first one with a real
+    # progress bar under it wins.
+    seen_bands: list[int] = []
+    for cand in sorted(parts, key=lambda s: -s[cv2.CC_STAT_AREA]):
+        band_top = int(cand[cv2.CC_STAT_TOP])
+        band_bot = band_top + int(cand[cv2.CC_STAT_HEIGHT])
+        if any(abs(band_top - b) < 8 for b in seen_bands):
+            continue                      # already tried this band
+        seen_bands.append(band_top)
 
-    if zone_l < x0 or zone_r > x1 or (zone_r - zone_l) > (x1 - x0) * 0.9:
-        return None
-    # Final sanity check on the track's proportion of the window. The real bar
-    # is 0.460 wide in every recording; grass-plus-HUD look-alikes came out at
-    # 0.22-0.83 and would otherwise be accepted as a live minigame.
-    if not (w * det.bar_min_width_frac <= (x1 - x0) <= w * det.bar_max_width_frac):
-        return None
+        # Every blob sharing this band — the fish tile splits the zone in two.
+        same_band = [s for s in parts
+                     if abs(int(s[cv2.CC_STAT_TOP]) - band_top) < 12
+                     and abs(int(s[cv2.CC_STAT_HEIGHT])
+                             - int(cand[cv2.CC_STAT_HEIGHT])) < 12]
+        zone_l = min(int(s[cv2.CC_STAT_LEFT]) for s in same_band)
+        zone_r = max(int(s[cv2.CC_STAT_LEFT]) + int(s[cv2.CC_STAT_WIDTH])
+                     for s in same_band)
 
-    ox, oy = origin
-    band_h = y_bot - y_top
-    strip = Rect(ox + x0, oy + y_top, x1 - x0, band_h)
+        y_top, y_bot = band_top + 3, band_bot - 3
+        if y_bot - y_top < 6:
+            continue
 
-    prog = None
-    full = strip
-    prog_row0 = prog_h = 0
-    if prog_rows:
-        prog_h = max(1, prog_rows[-1] - prog_rows[0] + 1)
-        prog = Rect(ox + x0, oy + prog_rows[0], x1 - x0, prog_h)
-        prog_row0 = prog_rows[0] - y_top
-        full = Rect(ox + x0, oy + y_top, x1 - x0, prog_row0 + prog_h)
+        # Progress bar directly beneath this band.
+        best_run = None
+        scan_to = min(h, band_bot + max(8, int((band_bot - band_top) * 0.9)))
+        for y in range(band_bot + 1, scan_to):
+            run = _row_span(ptrack[y])
+            if run and (best_run is None
+                        or (run[1] - run[0]) > (best_run[1] - best_run[0])):
+                best_run = run
 
-    return BarGeometry(x0=ox + x0, x1=ox + x1, y0=oy + y_top, y1=oy + y_bot,
-                       strip=strip, zone_w=float(zone_r - zone_l), prog=prog,
-                       full=full, band_rows=band_h,
-                       prog_row0=prog_row0, prog_rows=prog_h)
+        if best_run is not None and (best_run[1] - best_run[0]) >= min_w:
+            x0, x1 = best_run
+            prog_rows = [y for y in range(band_bot + 1, min(h, band_bot + 40))
+                         if ptrack[y, x0:x1].mean() > 0.55]
+        else:
+            # No progress bar under this band. Fall back to the dark track on
+            # the band's centre row — but only for *this* candidate.
+            mid = (y_top + y_bot) // 2
+            barish = zone.astype(bool) | tmask | fmask
+            run = _row_span(barish[mid])
+            if not run or (run[1] - run[0]) < min_w:
+                continue                  # not the bar; try the next candidate
+            x0, x1 = run
+            prog_rows = []
 
+        if zone_l < x0 or zone_r > x1 or (zone_r - zone_l) > (x1 - x0) * 0.9:
+            continue
+        if not (min_w <= (x1 - x0) <= max_w):
+            continue
 
-# --------------------------------------------------------------------------
-# per-frame read
-# --------------------------------------------------------------------------
+        ox, oy = origin
+        strip = Rect(ox + x0, oy + y_top, max(1, x1 - x0), max(1, y_bot - y_top))
+        prog = None
+        if prog_rows:
+            p0, p1 = min(prog_rows), max(prog_rows) + 1
+            prog = Rect(ox + x0, oy + p0, max(1, x1 - x0), max(1, p1 - p0))
+        full_top = y_top
+        full_bot = max(y_bot, (prog_rows and max(prog_rows) + 1) or y_bot)
+        full = Rect(ox + x0, oy + full_top, max(1, x1 - x0),
+                    max(1, full_bot - full_top))
+        return BarGeometry(
+            x0=ox + x0, x1=ox + x1, y0=oy + y_top, y1=oy + y_bot,
+            strip=strip, zone_w=float(zone_r - zone_l), prog=prog, full=full,
+            band_rows=y_bot - y_top,
+            prog_row0=(min(prog_rows) - full_top) if prog_rows else 0,
+            prog_rows=(max(prog_rows) + 1 - min(prog_rows)) if prog_rows else 0,
+        )
+
+    return None
+
 
 @dataclass
 class BarState:
