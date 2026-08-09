@@ -25,7 +25,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 ASSETS = ROOT / "assets" / "gui"
-STAMP = ROOT / ".deps_installed"
+
+sys.path.insert(0, str(ROOT))
+from _bootstrap import ensure_requirements          # noqa: E402
 
 # Card key -> image filename in assets/gui/. Add the PNGs yourself.
 IMAGES = {
@@ -45,40 +47,14 @@ IMAGES = {
 # first run: install dependencies
 # --------------------------------------------------------------------------
 
-def ensure_requirements(log=print) -> bool:
-    """Install requirements.txt once per machine. True if everything is ready.
-
-    Guarded by a marker file so the slow path only happens the first time.
-    """
-    if STAMP.exists():
-        return True
-    req = ROOT / "requirements.txt"
-    if not req.exists():
-        STAMP.write_text("no requirements.txt\n", encoding="utf-8")
-        return True
-    log("First run — installing dependencies, this takes a minute...")
-    try:
-        proc = subprocess.run(
-            [sys.executable, "-m", "pip", "install", "-r", str(req)],
-            capture_output=True, text=True, timeout=600,
-        )
-        if proc.returncode != 0:
-            log("pip failed:\n" + (proc.stderr or proc.stdout or "")[-1500:])
-            return False
-    except Exception as exc:                      # noqa: BLE001
-        log(f"could not run pip: {exc}")
-        return False
-    STAMP.write_text("ok\n", encoding="utf-8")
-    log("Dependencies installed.")
-    return True
-
-
 def _boot() -> None:
-    """Make sure customtkinter exists before we import it."""
+    """Get the dependencies in place before anything imports them."""
+    ensure_requirements()
     try:
         import customtkinter  # noqa: F401
     except ImportError:
-        ensure_requirements()
+        # The GUI extras are not in the core requirement check, so fetch them
+        # explicitly rather than failing with a traceback.
         try:
             subprocess.run([sys.executable, "-m", "pip", "install",
                             "customtkinter", "pillow"],

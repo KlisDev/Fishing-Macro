@@ -10,8 +10,11 @@ than by fixed timings, so it adapts to different rods, lighting and times of day
 
 ## Quick start (new computer)
 
-**You need:** Windows, [Python 3.10 or newer](https://www.python.org/downloads/)
+**You need:** Windows, [Python](https://www.python.org/downloads/) 3.10 or newer
 (tick **"Add Python to PATH"** during install), and Roblox.
+
+> Python **3.12** is the safest choice. Very new versions sometimes don't have
+> prebuilt downloads for these libraries yet, which makes the install fail.
 
 1. Download this repository (green **Code** button → **Download ZIP**) and
    unzip it somewhere you can find again.
@@ -126,6 +129,8 @@ Set in the app, or in `config.json` afterwards.
 | Clicks land in the wrong place | Calibrate. The shipped positions assume a particular window size. |
 | Hotkeys do nothing | Run as administrator, or use the buttons. |
 | Nothing works after editing `config.json` | Delete it — the defaults come back. |
+| `ModuleNotFoundError: No module named 'numpy'` | The libraries aren't installed. Both entry points install them automatically now, so make sure you're on the latest version. Otherwise run `pip install -r requirements.txt` yourself. |
+| pip installs, but packages are still missing | Your Python is probably too new for prebuilt downloads to exist yet. Python 3.12 is the safest choice. |
 
 Running `python run.py --debug` prints tracking error and progress during each
 reel, which is the fastest way to see what the bot thinks is happening.

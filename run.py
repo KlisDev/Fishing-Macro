@@ -14,9 +14,20 @@ import argparse
 import sys
 import threading
 import time
+from pathlib import Path
 
-from bloxfish.config import Config
-from bloxfish.engine import FishingEngine
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _bootstrap import ensure_requirements          # noqa: E402
+
+# Must happen before anything pulls in numpy/opencv, otherwise a fresh machine
+# just gets `ModuleNotFoundError` with no hint about what to do.
+if not ensure_requirements():
+    print()
+    print("Cannot start until those are installed.")
+    raise SystemExit(1)
+
+from bloxfish.config import Config                  # noqa: E402
+from bloxfish.engine import FishingEngine           # noqa: E402
 
 
 def _ask(prompt: str, default: str = "") -> str:
