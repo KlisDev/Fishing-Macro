@@ -94,23 +94,42 @@ class Screen:
         self._local = threading.local()
 
 
-def find_game_window(title: str, screen: Screen) -> Rect:
-    """Locate the game window, falling back to the primary monitor.
+def find_game_window(title: str, screen: Screen) -> tuple[Rect, bool]:
+    """Locate the game window. Returns (rect, found).
 
-    Roblox renders its client area under the title bar; we shave a few pixels
-    so the border never leaks into the colour masks.
+    `found` is False when we could not identify the window and fell back to the
+    whole monitor. That distinction matters enormously and used to be silent:
+    **every** position the bot uses is a fraction of this rect, so if Roblox is
+    running windowed and we hand back the full screen instead, the reel-bar
+    search band, the bite box and the charge meter all land somewhere else
+    entirely. The bot then cannot see the minigame at all and casts on top of a
+    live fight - which looks exactly like "it forgot it was fishing".
+
+    Roblox renders its client area under the title bar, so a few pixels are
+    shaved off so the border never leaks into the colour masks.
     """
     try:
         import pygetwindow as gw
 
-        matches = [w for w in gw.getWindowsWithTitle(title)
-                   if w.width > 400 and w.height > 300]
+        wanted = (title or "Roblox").lower()
+        matches = []
+        for w in gw.getWindowsWithTitle(title):
+            try:
+                t = (w.title or "").strip().lower()
+            except Exception:                       # noqa: BLE001
+                continue
+            # The real client is titled exactly "Roblox". Anything longer is a
+            # browser tab or an explorer window that merely mentions it.
+            if t != wanted and not t.startswith(wanted + " "):
+                continue
+            if w.width > 400 and w.height > 300:
+                matches.append(w)
         if matches:
             w = max(matches, key=lambda w: w.width * w.height)
             if w.isMinimized:
                 w.restore()
             return Rect(w.left + 8, w.top + 8,
-                        max(1, w.width - 16), max(1, w.height - 16))
-    except Exception:
+                        max(1, w.width - 16), max(1, w.height - 16)), True
+    except Exception:                               # noqa: BLE001
         pass
-    return screen.primary()
+    return screen.primary(), False

@@ -362,7 +362,7 @@ class Calibrator(ctk.CTkToplevel):
         time.sleep(0.45)                               # let the compositor settle
         scr = Screen()
         try:
-            self.win = find_game_window(self.cfg.window_title, scr)
+            self.win, _found = find_game_window(self.cfg.window_title, scr)
             shot = scr.grab(self.win)
         finally:
             scr.close()

@@ -190,16 +190,15 @@ class Detection:
     # Reel bar search window, as fractions of the game window.
     bar_search_top: float = 0.45
     bar_search_bottom: float = 0.98
-    # The reel track is a fixed-scale Roblox GUI element and measures 0.460 of
-    # the window width in every session recorded. Bounding it rejects the
-    # look-alikes: green terrain plus yellow HUD buttons can otherwise satisfy
-    # the colour tests and produce a "bar" 0.22-0.83 of the window wide, which
-    # would send the engine into a phantom minigame and fire stray clicks.
-    # The progress strip animates in, so for the first second of a minigame the
-    # track measures narrower than its settled 0.46. Too high a floor makes the
-    # bot wait out the animation - or miss the bar entirely on a laggy machine.
-    bar_min_width_frac: float = 0.33
-    bar_max_width_frac: float = 0.55
+    # How much of the window the reel track may span. This is only a sanity
+    # bound, NOT how the bar is identified -- Roblox UI does not scale linearly
+    # with window size, so the track measured 0.46 of the window on one setup
+    # and 0.29 on another. A tight band around one machine's number rejected
+    # the real bar everywhere else, and the bot then cast on top of a live
+    # fight. What actually identifies the bar is structural: a green band with a
+    # two-tone progress strip directly beneath it, the zone sitting inside it.
+    bar_min_width_frac: float = 0.25
+    bar_max_width_frac: float = 0.75
 
     # Bite marker search window, as fractions of the game window. A tight box
     # around where the '!' rides above the character. This deliberately excludes

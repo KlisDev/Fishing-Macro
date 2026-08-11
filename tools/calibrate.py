@@ -35,7 +35,7 @@ from bloxfish.vision import (                                  # noqa: E402
 
 
 def cmd_window(cfg: Config, screen: Screen) -> None:
-    win = find_game_window(cfg.window_title, screen)
+    win, _found = find_game_window(cfg.window_title, screen)
     print(f"game window : {win.width}x{win.height} at ({win.left},{win.top})")
     d = cfg.detection
     bar = win.sub(0.0, d.bar_search_top, 1.0, d.bar_search_bottom)
@@ -55,7 +55,7 @@ def cmd_window(cfg: Config, screen: Screen) -> None:
 
 
 def cmd_meter(cfg: Config, screen: Screen) -> None:
-    win = find_game_window(cfg.window_title, screen)
+    win, _found = find_game_window(cfg.window_title, screen)
     d = cfg.detection
     roi = win.sub(d.meter_left, d.meter_top, d.meter_right, d.meter_bottom)
     thr = max(30.0, d.meter_min_score_frac * win.height)
@@ -75,7 +75,7 @@ def cmd_meter(cfg: Config, screen: Screen) -> None:
 
 
 def cmd_bite(cfg: Config, screen: Screen) -> None:
-    win = find_game_window(cfg.window_title, screen)
+    win, _found = find_game_window(cfg.window_title, screen)
     d = cfg.detection
     roi = win.sub(d.bite_left, d.bite_top, d.bite_right, d.bite_bottom)
     print(f"bite ROI {roi.width}x{roi.height} — cast, wait for the '!', watch. "
@@ -113,7 +113,7 @@ def _acquire_bar(cfg: Config, screen: Screen, win, timeout=60.0):
 
 
 def cmd_bar(cfg: Config, screen: Screen) -> None:
-    win = find_game_window(cfg.window_title, screen)
+    win, _found = find_game_window(cfg.window_title, screen)
     geo = _acquire_bar(cfg, screen, win)
     if geo is None:
         return
@@ -142,7 +142,7 @@ def cmd_physics(cfg: Config, screen: Screen) -> None:
     Sacrifices one catch. Everything is measured in track widths, so the
     numbers drop straight into config.json regardless of resolution.
     """
-    win = find_game_window(cfg.window_title, screen)
+    win, _found = find_game_window(cfg.window_title, screen)
     geo = _acquire_bar(cfg, screen, win)
     if geo is None:
         return

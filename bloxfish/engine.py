@@ -88,7 +88,7 @@ class FishingEngine:
         self._end_timer = _timer_resolution()
         self._run_lock = threading.Lock()
 
-        self.window = find_game_window(cfg.window_title, self.screen)
+        self.window, found = find_game_window(cfg.window_title, self.screen)
         d = cfg.detection
         self.bar_search = self.window.sub(0.0, d.bar_search_top, 1.0, d.bar_search_bottom)
         self.bite_roi = self.window.sub(d.bite_left, d.bite_top, d.bite_right, d.bite_bottom)
@@ -115,8 +115,18 @@ class FishingEngine:
                      f"using 1 instead")
             cfg.rod_slot = "1"
 
-        self.log(f"window {self.window.width}x{self.window.height} "
-                 f"at ({self.window.left},{self.window.top})")
+        if found:
+            self.log(f"game window {self.window.width}x{self.window.height} "
+                     f"at ({self.window.left},{self.window.top})")
+        else:
+            self.log("*" * 64)
+            self.log("COULD NOT FIND THE ROBLOX WINDOW - using the whole screen.")
+            self.log("Every box the bot looks at is a fraction of that window, so")
+            self.log("if Roblox is windowed, NOTHING will line up: it will not see")
+            self.log("the reel bar and will cast while a fish is still hooked.")
+            self.log("Fix: make sure Roblox is open and not minimised, then")
+            self.log("restart the bot. Fullscreen/borderless is the safest.")
+            self.log("*" * 64)
         self.log(f"bite marker search over a "
                  f"{self.bite_roi.width}x{self.bite_roi.height} ROI "
                  f"(HSV ring, confirm x{cfg.detection.bite_confirm})")
