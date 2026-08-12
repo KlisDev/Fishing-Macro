@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 from .capture import Rect, Screen, find_game_window
-from .config import Config
+from .config import Config, VERSION
 from .controller import ReelController
 from .inputs import Keyboard, Mouse, valid_slot
 from . import shop as shop_mod
@@ -115,6 +115,7 @@ class FishingEngine:
                      f"using 1 instead")
             cfg.rod_slot = "1"
 
+        self.log(f"=== Fishing Macro v{VERSION} ===")
         if found:
             self.log(f"game window {self.window.width}x{self.window.height} "
                      f"at ({self.window.left},{self.window.top})")

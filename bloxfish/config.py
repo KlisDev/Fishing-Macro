@@ -14,6 +14,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 CONFIG_PATH = ROOT / "config.json"
 
+# Printed at startup. Bump this on every release: the fastest way to waste an
+# afternoon is debugging a bug report from a build that already has the fix.
+VERSION = "1.1.0"
+
 
 @dataclass
 class Colors:
