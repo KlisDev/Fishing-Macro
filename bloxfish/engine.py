@@ -160,6 +160,33 @@ class FishingEngine:
         return charge_meter_score(self.screen.grab(self.meter_roi))
 
     # -- states ------------------------------------------------------------
+    def _dump_diag(self, tag: str) -> None:
+        """Save the pixels behind a detection failure, for later analysis.
+
+        Guessing at daylight failures from a gameplay video does not work: the
+        recording is re-encoded, often rescaled, and never shows what the bot
+        actually sampled. This writes the exact regions the detectors read, so a
+        bug report carries evidence instead of a description.
+        """
+        if not self.cfg.diag:
+            return
+        try:
+            import cv2
+            from pathlib import Path as _P
+            out = _P(__file__).resolve().parent.parent / "diag"
+            out.mkdir(exist_ok=True)
+            n = self._diag_n = getattr(self, "_diag_n", 0) + 1
+            if n > self.cfg.diag_max:
+                return
+            stamp = f"{n:03d}_{tag}"
+            cv2.imwrite(str(out / f"{stamp}_barsearch.png"),
+                        self.screen.grab(self.bar_search))
+            cv2.imwrite(str(out / f"{stamp}_bite.png"),
+                        self.screen.grab(self.bite_roi))
+            self.log(f"[diag] wrote diag/{stamp}_*.png")
+        except Exception:                              # noqa: BLE001
+            pass
+
     def _minigame_running(self) -> bool:
         """Independent check that a reel minigame is on screen.
 
@@ -284,6 +311,7 @@ class FishingEngine:
                         time.sleep(pad)
                     self.mouse.click()
                     self.stats.bites += 1
+                    self._dump_diag("bite")
                     self.log("[bite] hooked")
                     self._spend_bait()      # bait is consumed at the bite
                     return True
@@ -308,6 +336,7 @@ class FishingEngine:
         if geo is None:
             self.stats.missed_bar += 1
             self.log("[reel] bar never appeared")
+            self._dump_diag("no_bar")
             return False
 
         self.state = State.REELING

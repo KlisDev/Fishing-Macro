@@ -134,12 +134,16 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--debug", action="store_true")
     ap.add_argument("--now", action="store_true", help="skip the hotkey wait")
+    ap.add_argument("--diag", action="store_true",
+                    help="save the pixels behind any detection failure to diag/")
     ap.add_argument("--config", default=None)
     args = ap.parse_args()
 
     cfg = Config.load(args.config)
     if args.debug:
         cfg.debug = True
+    if args.diag:
+        cfg.diag = True
 
     engine = FishingEngine(cfg)
     worker: threading.Thread | None = None

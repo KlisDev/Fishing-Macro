@@ -449,6 +449,10 @@ class Config:
     start_stop_key: str = "f2"
     quit_key: str = "f4"
     debug: bool = False
+    # Save the pixels the detectors read when something fails, into diag/.
+    # Turn on with `python run.py --diag` when reporting a bug.
+    diag: bool = False
+    diag_max: int = 40
 
     # Hotbar slot holding the fishing rod ('1'-'9' or '0'). Pressing it toggles
     # the rod in and out of the character's hands, which is the known cure for

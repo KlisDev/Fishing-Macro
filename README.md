@@ -135,6 +135,11 @@ Set in the app, or in `config.json` afterwards.
 Running `python run.py --debug` prints tracking error and progress during each
 reel, which is the fastest way to see what the bot thinks is happening.
 
+**Reporting a bug?** Run `python run.py --diag`. Whenever a detector fails it
+saves the exact pixels it was looking at into `diag/`. Those images plus the log
+say far more than a gameplay video, which is re-encoded and never shows what the
+bot actually sampled.
+
 ---
 
 ## How it works
