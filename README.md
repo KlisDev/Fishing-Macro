@@ -113,6 +113,20 @@ position the reel aims at is then a fraction of the wrong width. So leave a
 visible gap either side. The bot warns you in the log if the bar reaches the
 edge of your band.
 
+### The cast charge meter is the exact opposite
+
+Do **not** crop this one. The reel bar is drawn at a fixed place on screen; the
+charge meter hangs next to your character in the world, so it lands somewhere
+different on every cast. Measured across two casts a minute apart on the same
+character, it moved 3% of the screen width and **9% of the screen height**
+while staying exactly the same size.
+
+A box drawn snugly around the meter therefore catches some casts and misses
+others — which shows up as `[cast] no charge — retrying` and looks like a
+timing bug rather than a calibration one. Leave it as a wide central band. The
+log now prints the peak the meter reached against the threshold it needed, so
+you can tell "not in the box" (peak near zero) from "reading short".
+
 **Re-shoot** retakes the screenshot (open the relevant dialogue in game first,
 so you can line things up against the real UI). **Save** writes to `config.json`.
 

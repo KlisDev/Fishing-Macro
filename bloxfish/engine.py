@@ -151,6 +151,22 @@ class FishingEngine:
         self.log(f"bite marker search over a "
                  f"{self.bite_roi.width}x{self.bite_roi.height} ROI "
                  f"(HSV ring, confirm x{cfg.detection.bite_confirm})")
+        # Unlike the reel bar, the charge meter is not pinned to the screen —
+        # it hangs beside the character, so it lands somewhere different every
+        # cast. Cropping this box tight is therefore the opposite of the right
+        # move, and it fails intermittently rather than outright, which makes
+        # it very hard to attribute. Measured drift between two casts: 3% of
+        # the width, 9% of the height. Anything under a quarter of the screen
+        # is asking for a miss.
+        if (self.meter_roi.width < self.window.width * 0.20
+                or self.meter_roi.height < self.window.height * 0.25):
+            self.log(f"[warn] the charge meter box is "
+                     f"{self.meter_roi.width * 100 // max(1, self.window.width)}%"
+                     f"x{self.meter_roi.height * 100 // max(1, self.window.height)}%"
+                     f" of the window. The meter moves with your character "
+                     f"between casts, so a box this snug will catch some casts "
+                     f"and miss others. Make it bigger in Calibrate controls "
+                     f"(the shipped box is 56%x50%).")
 
     # -- lifecycle ---------------------------------------------------------
     def stop(self) -> None:
@@ -228,6 +244,8 @@ class FishingEngine:
                         self.screen.grab(self.bar_search))
             cv2.imwrite(str(out / f"{stamp}_bite.png"),
                         self.screen.grab(self.bite_roi))
+            cv2.imwrite(str(out / f"{stamp}_meter.png"),
+                        self.screen.grab(self.meter_roi))
             self.log(f"[diag] wrote diag/{stamp}_*.png")
         except Exception:                              # noqa: BLE001
             pass
@@ -259,6 +277,45 @@ class FishingEngine:
             pass
         return False
 
+    def _meter_miss(self, peak: int) -> None:
+        """Once the meter has been missed a few times, name the likely cause.
+
+        Measured across two casts a minute apart on the same character: the
+        meter appeared at x 0.408 / y 0.566 of the window for one and x 0.434 /
+        y 0.472 for the other — it had moved 3% of the width and 9% of the
+        height, while staying exactly the same size. It is drawn beside the
+        character in the world, not pinned to the screen, so it lands somewhere
+        different every cast. A search box cropped snugly around it therefore
+        works for a while and then stops, which is very hard to guess at from
+        the outside.
+        """
+        self._meter_misses = getattr(self, "_meter_misses", 0) + 1
+        if self._meter_misses != 3 or getattr(self, "_meter_warned", False):
+            return
+        self._meter_warned = True
+        w_frac = self.meter_roi.width / max(1, self.window.width)
+        h_frac = self.meter_roi.height / max(1, self.window.height)
+        self.log(f"[warn] the charge meter has been missed three times "
+                 f"(last peak {peak}, needs {self.meter_thr:.0f}).")
+        if peak >= self.meter_thr * 0.35:
+            # It is in the box, just reading short. Nothing about the box will
+            # help, so do not send anyone off to resize it.
+            self.log("[warn] the meter is being seen but reads short, so the "
+                     "box is in the right place. Run with --diag and send the "
+                     "diag/*_meter.png files.")
+        elif w_frac < 0.20 or h_frac < 0.25:
+            self.log(f"[warn] your 'Cast charge meter' box is only "
+                     f"{w_frac:.0%}x{h_frac:.0%} of the window. The meter is "
+                     f"drawn next to your character and shifts by up to ~3% of "
+                     f"the width and ~9% of the height from one cast to the "
+                     f"next, so a snug box misses it. Make it bigger in "
+                     f"Calibrate controls (the shipped box is 56%x50%).")
+        else:
+            self.log("[warn] the meter is not in the box at all, but the box "
+                     "is a normal size. Check it still covers the middle of "
+                     "the screen in Calibrate controls, and run with --diag.")
+        self._dump_diag("no_charge")
+
     def _do_cast(self) -> bool:
         """Charge and release, verifying the cast actually took.
 
@@ -288,10 +345,13 @@ class FishingEngine:
             self.mouse.press()
             deadline = time.perf_counter() + t.cast_hold
             charged = False
+            peak = 0
             while self._alive() and time.perf_counter() < deadline:
-                if t.verify_cast and self._meter_score() >= self.meter_thr:
-                    charged = True
-                    break
+                if t.verify_cast:
+                    peak = max(peak, self._meter_score())
+                    if peak >= self.meter_thr:
+                        charged = True
+                        break
                 time.sleep(0.008)
             # Hold a beat longer at full charge, then release to actually throw.
             if charged:
@@ -313,7 +373,16 @@ class FishingEngine:
             # forever. Close it and step out before trying again.
             if shop_mod.escape_dialogue(self):
                 continue
-            self.log(f"[cast] no charge — retrying ({attempt}/{attempts})")
+            # Say what was actually seen. "No charge" has two very different
+            # causes and the number tells them apart: a peak near zero means
+            # the meter is not inside the search box at all (it is drawn beside
+            # your character and moves with them, so a box cropped tight around
+            # one cast misses the next), while a peak just short of the
+            # threshold means the box is right and the bar is simply reading
+            # short.
+            self.log(f"[cast] no charge — retrying ({attempt}/{attempts}) "
+                     f"[meter peaked at {peak}, needs {self.meter_thr:.0f}]")
+            self._meter_miss(peak)
             self._sleep(t.cast_retry_gap)
 
         # Meter never lit. Count it so the summary is honest and let the loop

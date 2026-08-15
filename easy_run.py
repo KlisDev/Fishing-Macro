@@ -154,9 +154,15 @@ CALIB_GROUPS = [
         ("meter", "box", "detection",
          ("meter_left", "meter_top", "meter_right", "meter_bottom"),
          "Cast charge meter",
-         "Cover the thin green bar that fills next to you while a cast charges. "
-         "Stay in the middle of the screen — your health and energy bars are "
-         "green too, and would be mistaken for it.", "meter"),
+         "Keep this one BIG — it is the opposite of the reel bar band. The "
+         "thin green bar hangs next to your character rather than sitting at a "
+         "fixed spot on screen, so it lands somewhere different on every cast: "
+         "measured, it shifted by a tenth of the screen height between two "
+         "casts a minute apart. A box drawn snugly around it catches some "
+         "casts and misses others. Leave it as a wide central band — big "
+         "enough to hold the meter wherever it turns up, but clear of the "
+         "screen edges, because your health and energy bars are green too.",
+         "meter"),
     ]),
     ("Catch popups", "💬", "#fb923c", [
         ("popup", "box", "dialog", ("left", "top", "right", "bottom"),
