@@ -259,7 +259,8 @@ class Calibrator(ctk.CTkToplevel):
     item on the left, drag it into place, save. Once per computer.
     """
 
-    HANDLE = 10
+    HANDLE = 10     # corner grip for a free box
+    GRIP = 30       # half-width of the edge grips on a full-width band
     DOT_R = 10
 
     def __init__(self, master, cfg: Config) -> None:
@@ -272,6 +273,10 @@ class Calibrator(ctk.CTkToplevel):
         self.drag: tuple | None = None
         self.shapes: dict[str, dict] = {}
         self.scale = 1.0
+        # Set by shoot(). Until then there is nothing to draw against, and
+        # every coordinate helper would raise on a missing attribute.
+        self.win = None
+        self.found = False
 
         outer = ctk.CTkFrame(self, fg_color="transparent")
         outer.pack(fill="both", expand=True, padx=10, pady=10)
@@ -317,6 +322,13 @@ class Calibrator(ctk.CTkToplevel):
         self.hint = ctk.CTkLabel(bar, text="Pick an item on the left to begin.",
                                  text_color=MUTED, anchor="w")
         self.hint.pack(side="left")
+        # Calibrating against the wrong rectangle is silent and ruinous: every
+        # number here is a fraction of the game window, so if we photographed
+        # the whole desktop instead, the boxes you line up are stored against
+        # the wrong size and the bot ends up searching empty screen.
+        self.warn = ctk.CTkLabel(right, text="", text_color="#ef476f",
+                                 anchor="w", justify="left", wraplength=880,
+                                 font=ctk.CTkFont(size=12, weight="bold"))
         ctk.CTkButton(bar, text="💾  Save", width=100, fg_color=ACCENT,
                       command=self.save).pack(side="right", padx=(6, 0))
         ctk.CTkButton(bar, text="📷  Re-shoot", width=110, fg_color="#3a3f45",
@@ -362,10 +374,20 @@ class Calibrator(ctk.CTkToplevel):
         time.sleep(0.45)                               # let the compositor settle
         scr = Screen()
         try:
-            self.win, _found = find_game_window(self.cfg.window_title, scr)
+            self.win, self.found = find_game_window(self.cfg.window_title, scr)
             shot = scr.grab(self.win)
         finally:
             scr.close()
+        if self.found:
+            self.warn.grid_forget()
+        else:
+            self.warn.configure(
+                text="⚠  Roblox was not found — this is a picture of your whole "
+                     "screen, not the game window. Anything you line up now "
+                     "will be saved against the wrong size and the bot will "
+                     "look in the wrong place. Start Roblox, bring it to the "
+                     "front, then press Re-shoot.")
+            self.warn.grid(row=3, column=0, sticky="ew", pady=(8, 0))
         self.deiconify()
         try:
             self.master_app.deiconify()
@@ -401,67 +423,113 @@ class Calibrator(ctk.CTkToplevel):
         self.redraw()
 
     # -- drawing ----------------------------------------------------------
-    def _px(self, fx: float, fy: float) -> tuple[float, float]:
-        return fx * self.win.width * self.scale, fy * self.win.height * self.scale
+    # The two helpers below deliberately go through the *same* arithmetic the
+    # bot does, rather than re-deriving it: `Rect.sub` for search areas (as in
+    # FishingEngine.__init__) and int(round(...)) for click points (as in
+    # shop._abs). What you see outlined here is therefore the exact rectangle
+    # the bot will grab, down to the pixel, not an approximation of it.
+    def _box_px(self, l: float, t: float, r: float,
+                b: float) -> tuple[float, float, float, float]:
+        sub = self.win.sub(l, t, r, b)
+        x0 = (sub.left - self.win.left) * self.scale
+        y0 = (sub.top - self.win.top) * self.scale
+        return x0, y0, x0 + sub.width * self.scale, y0 + sub.height * self.scale
 
-    def _text(self, x: float, y: float, text: str, colour: str) -> int:
-        """Canvas text with a black halo — the game behind it is any colour."""
+    def _dot_px(self, fx: float, fy: float) -> tuple[float, float]:
+        return (int(round(self.win.width * fx)) * self.scale,
+                int(round(self.win.height * fy)) * self.scale)
+
+    _HALO = ((-1, 0), (1, 0), (0, -1), (0, 1),
+             (-1, -1), (1, -1), (-1, 1), (1, 1), (-2, 0), (2, 0))
+
+    def _text(self, x: float, y: float, text: str, colour: str) -> list:
+        """Canvas text with a black halo — the game behind it is any colour.
+
+        Returns every id it made, each with its offset from the anchor, so the
+        label can be dragged along with its shape instead of being redrawn.
+        """
         font = ("Segoe UI", 10, "bold")
-        for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1),
-                       (-1, -1), (1, -1), (-1, 1), (1, 1), (-2, 0), (2, 0)):
-            self.canvas.create_text(x + dx, y + dy, text=text, fill="#000000",
-                                    anchor="w", font=font)
-        return self.canvas.create_text(x, y, text=text, fill=colour,
-                                       anchor="w", font=font)
+        ids = [(self.canvas.create_text(x + dx, y + dy, text=text,
+                                        fill="#000000", anchor="w", font=font),
+                dx, dy) for dx, dy in self._HALO]
+        ids.append((self.canvas.create_text(x, y, text=text, fill=colour,
+                                            anchor="w", font=font), 0, 0))
+        return ids
+
+    def _place_text(self, ids, x: float, y: float) -> None:
+        for cid, dx, dy in ids or ():
+            self.canvas.coords(cid, x + dx, y + dy)
+
+    def _fracs(self, spec) -> tuple:
+        """The stored value of an entry, as plain fractions."""
+        _k, kind, holder, fields, *_ = spec
+        obj = getattr(self.cfg, holder)
+        if kind != "box":
+            return tuple(getattr(obj, fields[0]))
+        if len(fields) == 2:
+            # A full-width band. Left and right are not stored at all, so they
+            # are not editable either -- see _move.
+            return 0.0, getattr(obj, fields[0]), 1.0, getattr(obj, fields[1])
+        return tuple(getattr(obj, f) for f in fields)
 
     def redraw(self) -> None:
         self.canvas.delete("all")
         self.shapes.clear()
         if getattr(self, "_tk_img", None) is not None:
             self.canvas.create_image(0, 0, anchor="nw", image=self._tk_img)
+        if self.win is None:                       # no screenshot yet
+            return
 
         for title, icon, colour, entries in CALIB_GROUPS:
-            for key, kind, holder, fields, label, _desc, _img in entries:
-                obj = getattr(self.cfg, holder)
+            for entry in entries:
+                key, kind, _holder, fields, label = entry[:5]
                 active = key == self.sel
                 col = colour if active else GHOST
                 if kind == "box":
-                    if len(fields) == 2:
-                        l, t = 0.0, getattr(obj, fields[0])
-                        r, b = 1.0, getattr(obj, fields[1])
-                    else:
-                        l, t, r, b = (getattr(obj, f) for f in fields)
-                    x0, y0 = self._px(l, t)
-                    x1, y1 = self._px(r, b)
+                    x0, y0, x1, y1 = self._box_px(*self._fracs(entry))
                     rid = self.canvas.create_rectangle(
                         x0, y0, x1, y1, outline=col, width=3 if active else 1,
                         dash=() if active else (3, 4))
-                    hid = None
+                    grips: dict[str, int] = {}
                     tid = None
                     if active:
                         # Only the selected item is labelled. Drawing all of
                         # them at once was unreadable clutter.
                         tid = self._text(x0 + 8, y0 + 13, f"{icon} {label}", col)
-                        hid = self.canvas.create_rectangle(
-                            x1 - self.HANDLE, y1 - self.HANDLE, x1, y1,
-                            outline="#ffffff", fill=col, width=2)
-                    self.shapes[key] = {"kind": "box", "id": rid,
-                                        "label": tid, "handle": hid}
+                        g = lambda a, b_, c, d: self.canvas.create_rectangle(   # noqa: E731
+                            a, b_, c, d, outline="#ffffff", fill=col, width=2)
+                        if len(fields) == 2:
+                            # Height-only band: grips on the edges that exist.
+                            # It used to get a corner handle like any other
+                            # box, so you could drag its sides inwards, watch
+                            # it narrow, save -- and find it full width again
+                            # on the next open, because there is nowhere to
+                            # store a left or a right.
+                            cx = (x0 + x1) / 2
+                            grips["top"] = g(cx - self.GRIP, y0 - 4,
+                                             cx + self.GRIP, y0 + 4)
+                            grips["bottom"] = g(cx - self.GRIP, y1 - 4,
+                                                cx + self.GRIP, y1 + 4)
+                        else:
+                            grips["corner"] = g(x1 - self.HANDLE,
+                                                y1 - self.HANDLE, x1, y1)
+                    self.shapes[key] = {"kind": "box", "id": rid, "label": tid,
+                                        "grips": grips, "entry": entry}
                 else:
-                    fx, fy = getattr(obj, fields[0])
-                    x, y = self._px(fx, fy)
+                    x, y = self._dot_px(*self._fracs(entry))
                     r = self.DOT_R + (4 if active else 0)
                     oid = self.canvas.create_oval(
                         x - r, y - r, x + r, y + r,
                         outline="#ffffff" if active else col,
                         width=3 if active else 1,
                         fill=col if active else "")
-                    tid = None
+                    tid = tick = None
                     if active:
-                        self.canvas.create_line(x - r - 7, y, x - r - 1, y,
-                                                fill="#ffffff", width=2)
+                        tick = self.canvas.create_line(
+                            x - r - 7, y, x - r - 1, y, fill="#ffffff", width=2)
                         tid = self._text(x + r + 7, y, f"{icon} {label}", col)
-                    self.shapes[key] = {"kind": "dot", "id": oid, "label": tid}
+                    self.shapes[key] = {"kind": "dot", "id": oid, "label": tid,
+                                        "tick": tick, "r": r, "entry": entry}
 
     # -- selection --------------------------------------------------------
     def select(self, key: str) -> None:
@@ -481,10 +549,16 @@ class Calibrator(ctk.CTkToplevel):
             except Exception:                          # noqa: BLE001
                 pass                                   # never break selection
             self.d_img.image = img
-            self.hint.configure(
-                text="Drag inside the box to move it • drag the white corner "
-                     "to resize" if kind == "box"
-                else "Drag the dot onto the button")
+            if kind != "box":
+                tip = "Drag the dot onto the button"
+            elif len(_f) == 2:
+                tip = ("Drag the band up or down • drag the white grip on the "
+                       "top or bottom edge to change its height (it always "
+                       "spans the full width)")
+            else:
+                tip = ("Drag inside the box to move it • drag the white corner "
+                       "to resize")
+            self.hint.configure(text=tip)
         self.redraw()
 
     # -- dragging (selected item only) -------------------------------------
@@ -492,10 +566,10 @@ class Calibrator(ctk.CTkToplevel):
         if not self.sel or self.sel not in self.shapes:
             return
         it = self.shapes[self.sel]
-        if it["kind"] == "box" and it.get("handle") is not None:
-            hx0, hy0, hx1, hy1 = self.canvas.coords(it["handle"])
-            if hx0 - 3 <= ev.x <= hx1 + 3 and hy0 - 3 <= ev.y <= hy1 + 3:
-                self.drag = ("resize", ev.x, ev.y)
+        for name, gid in it.get("grips", {}).items():
+            gx0, gy0, gx1, gy1 = self.canvas.coords(gid)
+            if gx0 - 4 <= ev.x <= gx1 + 4 and gy0 - 4 <= ev.y <= gy1 + 4:
+                self.drag = (name, ev.x, ev.y)
                 return
         x0, y0, x1, y1 = self.canvas.coords(it["id"])
         # Dots are small targets, so allow a wide grab radius around them.
@@ -508,6 +582,7 @@ class Calibrator(ctk.CTkToplevel):
         # <B1-Motion>, and the edit would otherwise be dropped.
         if self.drag and self.sel:
             self._commit(self.sel)
+            self._resync(self.sel)
         self.drag = None
 
     def _move(self, ev) -> None:
@@ -516,27 +591,31 @@ class Calibrator(ctk.CTkToplevel):
         mode, px, py = self.drag
         dx, dy = ev.x - px, ev.y - py
         it = self.shapes[self.sel]
+        x0, y0, x1, y1 = self.canvas.coords(it["id"])
         if mode == "move":
-            self.canvas.move(it["id"], dx, dy)
-            if it.get("handle") is not None:
-                self.canvas.move(it["handle"], dx, dy)
-        else:
-            x0, y0, x1, y1 = self.canvas.coords(it["id"])
+            x0, y0, x1, y1 = x0 + dx, y0 + dy, x1 + dx, y1 + dy
+        elif mode == "corner":
             x1, y1 = max(x0 + 26, x1 + dx), max(y0 + 20, y1 + dy)
-            self.canvas.coords(it["id"], x0, y0, x1, y1)
-            self.canvas.coords(it["handle"], x1 - self.HANDLE,
-                               y1 - self.HANDLE, x1, y1)
+        elif mode == "bottom":
+            y1 = max(y0 + 20, y1 + dy)
+        elif mode == "top":
+            y0 = min(y1 - 20, y0 + dy)
+        self.canvas.coords(it["id"], x0, y0, x1, y1)
         self.drag = (mode, ev.x, ev.y)
         self._commit(self.sel)
+        self._resync(self.sel)
 
     def _commit(self, key: str) -> None:
+        """Read the shape off the canvas and store it as fractions."""
         _t, _i, _c, spec = _group_of(key)
-        if not spec:
+        if not spec or self.win is None or key not in self.shapes:
             return
         _k, kind, holder, fields, *_ = spec
         obj = getattr(self.cfg, holder)
         W = self.win.width * self.scale
         H = self.win.height * self.scale
+        if W < 1 or H < 1:
+            return
         x0, y0, x1, y1 = self.canvas.coords(self.shapes[key]["id"])
         clip = lambda v: round(min(1.0, max(0.0, v)), 4)     # noqa: E731
         if kind == "box":
@@ -550,10 +629,53 @@ class Calibrator(ctk.CTkToplevel):
             setattr(obj, fields[0], (clip((x0 + x1) / 2 / W),
                                      clip((y0 + y1) / 2 / H)))
 
+    def _resync(self, key: str) -> None:
+        """Redraw the shape from the value that was actually stored.
+
+        The stored fractions are the truth; the outline is only a view of them.
+        Snapping back after every commit means the tool can never show you a
+        box it did not keep -- which is what made a resized full-width band
+        look saved and then reappear at its old size on the next open.
+        """
+        it = self.shapes.get(key)
+        if it is None or self.win is None:
+            return
+        entry = it["entry"]
+        if it["kind"] == "box":
+            x0, y0, x1, y1 = self._box_px(*self._fracs(entry))
+            self.canvas.coords(it["id"], x0, y0, x1, y1)
+            cx = (x0 + x1) / 2
+            grips = it.get("grips", {})
+            if "corner" in grips:
+                self.canvas.coords(grips["corner"], x1 - self.HANDLE,
+                                   y1 - self.HANDLE, x1, y1)
+            if "top" in grips:
+                self.canvas.coords(grips["top"], cx - self.GRIP, y0 - 4,
+                                   cx + self.GRIP, y0 + 4)
+            if "bottom" in grips:
+                self.canvas.coords(grips["bottom"], cx - self.GRIP, y1 - 4,
+                                   cx + self.GRIP, y1 + 4)
+            self._place_text(it.get("label"), x0 + 8, y0 + 13)
+        else:
+            x, y = self._dot_px(*self._fracs(entry))
+            r = it["r"]
+            self.canvas.coords(it["id"], x - r, y - r, x + r, y + r)
+            if it.get("tick") is not None:
+                self.canvas.coords(it["tick"], x - r - 7, y, x - r - 1, y)
+            self._place_text(it.get("label"), x + r + 7, y)
+
     def save(self) -> None:
         if self.sel:
             self._commit(self.sel)
-        self.cfg.save()
+        try:
+            self.cfg.save()
+        except Exception as exc:                       # noqa: BLE001
+            # Read-only folder, a cloud-sync client holding the file open, no
+            # permission in Program Files... silently swallowing this was the
+            # difference between "saved" and "saved nowhere".
+            self.hint.configure(text=f"✖  Could not write config.json: {exc}",
+                                text_color="#ef476f")
+            return
         self.hint.configure(text="✔  Saved to config.json", text_color=ACCENT)
         self.after(2500, lambda: self.hint.configure(text_color=MUTED))
         self.redraw()
@@ -586,7 +708,7 @@ class App(ctk.CTk):
                      font=ctk.CTkFont(size=26, weight="bold")).pack(side="left")
         ctk.CTkButton(head, text="Calibrate controls", width=150,
                       fg_color="#3a3f45", hover_color="#4a5057",
-                      command=lambda: Calibrator(self, self.cfg)).pack(side="right")
+                      command=self._calibrate).pack(side="right")
 
         body = ctk.CTkScrollableFrame(self, fg_color="transparent")
         body.pack(fill="both", expand=True, padx=20, pady=6)
@@ -681,6 +803,17 @@ class App(ctk.CTk):
                       fg_color=ACCENT, hover_color="#268a5f",
                       font=ctk.CTkFont(size=15, weight="bold"),
                       command=self._apply_form).pack(side="right")
+
+    def _calibrate(self) -> None:
+        # One at a time. Two of these fight over withdrawing the main window
+        # for the screenshot, and each saves over the other's numbers.
+        win = getattr(self, "_calib", None)
+        if win is not None and win.winfo_exists():
+            win.deiconify()
+            win.lift()
+            win.focus_force()
+            return
+        self._calib = Calibrator(self, self.cfg)
 
     def _apply_form(self) -> None:
         # A quick double-click on Continue fires this twice; the first call
