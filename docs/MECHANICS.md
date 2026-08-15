@@ -143,8 +143,33 @@ Two guards handle it:
   starts;
 * **tracking** it (`zone_mask_tracking`) is permissive, but `read_bar` first
   requires the track's dark background to still cover `bar_track_min_frac` of
-  the strip. Measured: **>=0.553 throughout a minigame, <=0.210 (p95) once the
-  bar is gone**.
+  the strip.
+
+That last gate is a **floor, not a discriminator**, and it took two field
+reports to learn the difference. It was set at 0.35 from one machine, where
+coverage runs 0.53–0.61. Elsewhere, mid-fight:
+
+| recording | track coverage while running | why |
+|---|---|---|
+| author, 4K | 0.530–0.609 | — |
+| tester A, 1080p | **0.273**–0.526 | a bright effect shining through the semi-transparent bar |
+| tester B, 1080p | **0.036**–0.165 | track renders `(24,32,32)`; `track_mask` demanded the channels agree within 6 |
+
+Every frame under the threshold is a frame `read_bar` returns `None`, the reel
+loop `continue`s, and **the controller is not driven**. The fight carries on
+un-steered — 29% of one catch — which from outside looks exactly like the bot
+giving up mid-fish.
+
+Both were fixed by measurement, not by guessing: `track_neutral_tol` (12, was a
+hardcoded 6) makes the mask see tester B's track at 0.548 instead of 0.036, and
+the threshold drops to 0.12. That costs nothing, because across 713 frames from
+three recordings taken *after* the bar was gone, this gate rejected **none** of
+them at any threshold down to 0.0 — `read_bar`'s zone-column test was already
+doing the whole job.
+
+Measured over 1252 frames, three machines: frames steered while the minigame
+was live went from **297/539 (55%) to 539/539 (100%)**, with phantom reads
+staying at **0/713**.
 
 Verified: the failing recording goes from 4 phantom "catches" to **0**, while
 the reference still yields exactly 3 minigames with the same boundaries and

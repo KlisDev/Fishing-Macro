@@ -75,11 +75,19 @@ def zone_mask_tracking(img: np.ndarray, c: Colors) -> np.ndarray:
 
 
 def track_mask(img: np.ndarray, c: Colors) -> np.ndarray:
+    """The reel track's dark background.
+
+    Neutral grey close to (34,34,34): the channels must also agree with each
+    other, which rejects most of the dark scenery. How closely they have to
+    agree is `track_neutral_tol` and it is not a formality — it was hardcoded
+    at 6, and on a machine whose track renders (24,32,32) the blue channel sits
+    8 below green, so every track pixel failed and coverage read 0.04 instead
+    of 0.70. The bar was plainly there; the mask simply could not see it.
+    """
     b, g, r = _split(img)
-    # Neutral grey close to (34,34,34): channels must also agree with each other,
-    # which rejects most of the dark scenery.
+    tol = c.track_neutral_tol
     return ((np.abs(b - c.track[0]) <= c.track_tol)
-            & (np.abs(b - g) <= 6) & (np.abs(g - r) <= 6))
+            & (np.abs(b - g) <= tol) & (np.abs(g - r) <= tol))
 
 
 def fish_mask(img: np.ndarray, c: Colors) -> np.ndarray:

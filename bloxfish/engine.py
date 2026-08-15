@@ -144,10 +144,18 @@ class FishingEngine:
                      f"wide; the bar needs at least {need_w}px to be accepted. "
                      f"Widen it in Calibrate controls or the bar will never be "
                      f"found.")
-        if self.bar_search.height < 60:
+        # Height has to be judged against the window, not in raw pixels. A flat
+        # "under 60 px" rule fired on a 1264x704 window where the box was 59 px
+        # -- 8.4% of the screen for a bar that measures 6.6%, which was fine and
+        # was proven fine: the margin can go to zero on both axes without losing
+        # a single frame. Only a box shorter than the bar itself is a problem.
+        need_h = int(self.window.height * 0.075)
+        if self.bar_search.height < need_h:
             self.log(f"[warn] the reel bar box is only {self.bar_search.height}px "
-                     f"tall. It needs room below the bar for the thin progress "
-                     f"strip, which is what identifies the bar at all.")
+                     f"tall and the bar itself is about "
+                     f"{int(self.window.height * 0.066)}px. It also needs the "
+                     f"thin progress strip underneath, which is what identifies "
+                     f"the bar at all — give it a little room below.")
         self.log(f"bite marker search over a "
                  f"{self.bite_roi.width}x{self.bite_roi.height} ROI "
                  f"(HSV ring, confirm x{cfg.detection.bite_confirm})")

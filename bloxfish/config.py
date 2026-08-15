@@ -34,6 +34,12 @@ class Colors:
 
     track: tuple = (34, 34, 34)
     track_tol: int = 14
+    # How far the track's three channels may differ from each other. Measured
+    # across machines: the author's renders (34,34,34) but a tester's renders
+    # (24,32,32), an 8-point gap between blue and green. This was hardcoded at
+    # 6, so on that machine the mask matched 4% of the track instead of 70% and
+    # the bot decided the bar had gone, mid-fight, several times a catch.
+    track_neutral_tol: int = 12
 
     # Green zone. Two accepted looks, both neutral between blue and red:
     #   * green-dominant — the normal zone (16,150,21) and its arrow (193,230,195)
@@ -251,11 +257,25 @@ class Detection:
     # gone stays gone, so a generous interval costs nothing real.
     bar_lost_seconds: float = 0.9
     # Proof the bar is still on screen: this fraction of the strip must still be
-    # the track's dark background. Needed because the zone tracker accepts the
-    # neutral-grey alarm state, and grey scenery would otherwise read as a zone
-    # once the bar is gone. Measured: >=0.553 while a minigame runs, <=0.210 at
-    # the 95th percentile once it ends.
-    bar_track_min_frac: float = 0.35
+    # the track's dark background. It exists because the zone tracker accepts
+    # the neutral-grey alarm state, which grey scenery also satisfies.
+    #
+    # It is a FLOOR, not a discriminator, and the difference matters. At 0.35 it
+    # was doing the second job, tuned on one machine where coverage sat at
+    # 0.53-0.61 with room to spare. Measured elsewhere, mid-fight, on 1252
+    # frames from three recordings: 0.27 on a tester's machine when a bright
+    # effect shone through the semi-transparent bar, and 0.04 on another before
+    # `track_neutral_tol` was fixed. Every frame under the threshold is a frame
+    # the reel loop reads no zone and therefore *does not steer* -- 29% of one
+    # fight, spent drifting, which looks exactly like the bot giving up
+    # mid-catch.
+    #
+    # Lowering it costs nothing measurable: across those same recordings the
+    # gate rejected 0 of 713 after-the-fact frames at ANY threshold down to
+    # 0.0, because read_bar's zone-column test already rejects them. 0.12 sits
+    # below the worst observed live value (0.29) and far above a strip showing
+    # sky or water (0.001).
+    bar_track_min_frac: float = 0.12
     # Before calling a catch finished, confirm the progress strip is really
     # gone. It must span at least this fraction of the track to count as still
     # drawn. Losing the zone alone means nothing — a chest sitting on a small
