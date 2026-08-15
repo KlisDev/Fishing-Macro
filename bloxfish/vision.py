@@ -247,7 +247,8 @@ def _longest_run(mask_row: np.ndarray):
 
 
 def find_bar(img: np.ndarray, origin: tuple[int, int],
-             colors: Colors, det: Detection) -> BarGeometry | None:
+             colors: Colors, det: Detection,
+             ref_width: int | None = None) -> BarGeometry | None:
     """Locate the reel bar inside `img` (a grab of the search region).
 
     Two-step, because neither cue alone is enough:
@@ -268,10 +269,17 @@ def find_bar(img: np.ndarray, origin: tuple[int, int],
 
     `origin` is the absolute (left, top) of `img`, so the result is in screen
     coordinates. Returns None when no bar is on screen.
+
+    `ref_width` is the game window's width, which is what the width bounds are
+    fractions of. Pass it whenever the search box is not the full window width:
+    scoring the track against the box instead would mean a box cropped in
+    around the bar makes the bar look proportionally wider, until it trips
+    `bar_max_width_frac` and the real bar is thrown away.
     """
     h, w = img.shape[:2]
-    min_w = int(w * det.bar_min_width_frac)
-    max_w = int(w * det.bar_max_width_frac)
+    ref = int(ref_width or w)
+    min_w = int(ref * det.bar_min_width_frac)
+    max_w = int(ref * det.bar_max_width_frac)
 
     zone = zone_mask(img, colors).astype(np.uint8)
     n, _lbl, stats, _cent = cv2.connectedComponentsWithStats(zone, 8)

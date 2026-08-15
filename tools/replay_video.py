@@ -43,8 +43,10 @@ def main() -> int:
     h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     fps = cap.get(cv2.CAP_PROP_FPS) or 60.0
     window = Rect(0, 0, w, h)
-    search = window.sub(0.0, cfg.detection.bar_search_top,
-                        1.0, cfg.detection.bar_search_bottom)
+    search = window.sub(cfg.detection.bar_search_left,
+                        cfg.detection.bar_search_top,
+                        cfg.detection.bar_search_right,
+                        cfg.detection.bar_search_bottom)
     bite_roi = window.sub(cfg.detection.bite_left, cfg.detection.bite_top,
                           cfg.detection.bite_right, cfg.detection.bite_bottom)
     print(f"video {w}x{h} @{fps:.0f}   "
@@ -70,7 +72,8 @@ def main() -> int:
 
         sub = frame[search.top:search.bottom, search.left:search.right]
         if geo is None:
-            geo = find_bar(sub, (search.left, search.top), cfg.colors, cfg.detection)
+            geo = find_bar(sub, (search.left, search.top), cfg.colors,
+                           cfg.detection, window.width)
             if geo is not None:
                 zone_w_ref = geo.zone_w
         state = None

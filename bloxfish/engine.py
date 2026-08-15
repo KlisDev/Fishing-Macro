@@ -90,7 +90,8 @@ class FishingEngine:
 
         self.window, found = find_game_window(cfg.window_title, self.screen)
         d = cfg.detection
-        self.bar_search = self.window.sub(0.0, d.bar_search_top, 1.0, d.bar_search_bottom)
+        self.bar_search = self.window.sub(d.bar_search_left, d.bar_search_top,
+                                          d.bar_search_right, d.bar_search_bottom)
         self.bite_roi = self.window.sub(d.bite_left, d.bite_top, d.bite_right, d.bite_bottom)
         self.meter_roi = self.window.sub(d.meter_left, d.meter_top,
                                          d.meter_right, d.meter_bottom)
@@ -109,6 +110,7 @@ class FishingEngine:
         self._rod_equipped = True
         self._buy_failures = 0
         self._since_sell = 0
+        self._clip_warned = False
 
         if not valid_slot(cfg.rod_slot):
             self.log(f"[warn] rod_slot {cfg.rod_slot!r} is not 1-9 or 0 — "
@@ -128,6 +130,24 @@ class FishingEngine:
             self.log("Fix: make sure Roblox is open and not minimised, then")
             self.log("restart the bot. Fullscreen/borderless is the safest.")
             self.log("*" * 64)
+        self.log(f"reel bar search over a "
+                 f"{self.bar_search.width}x{self.bar_search.height} box "
+                 f"({self.bar_search.width * 100 // max(1, self.window.width)}% "
+                 f"of the window wide)")
+        # A box cropped tighter than the narrowest bar we would accept can
+        # never contain a whole one, so the bot would simply never see the
+        # minigame. That is indistinguishable from the game not running, which
+        # is the worst possible way for a mis-calibration to present itself.
+        need_w = int(self.window.width * cfg.detection.bar_min_width_frac)
+        if self.bar_search.width < need_w:
+            self.log(f"[warn] the reel bar box is only {self.bar_search.width}px "
+                     f"wide; the bar needs at least {need_w}px to be accepted. "
+                     f"Widen it in Calibrate controls or the bar will never be "
+                     f"found.")
+        if self.bar_search.height < 60:
+            self.log(f"[warn] the reel bar box is only {self.bar_search.height}px "
+                     f"tall. It needs room below the bar for the thin progress "
+                     f"strip, which is what identifies the bar at all.")
         self.log(f"bite marker search over a "
                  f"{self.bite_roi.width}x{self.bite_roi.height} ROI "
                  f"(HSV ring, confirm x{cfg.detection.bite_confirm})")
@@ -147,8 +167,33 @@ class FishingEngine:
     # -- helpers -----------------------------------------------------------
     def _look_for_bar(self) -> BarGeometry | None:
         img = self.screen.grab(self.bar_search)
-        return find_bar(img, (self.bar_search.left, self.bar_search.top),
-                        self.cfg.colors, self.cfg.detection)
+        geo = find_bar(img, (self.bar_search.left, self.bar_search.top),
+                       self.cfg.colors, self.cfg.detection, self.window.width)
+        if geo is not None:
+            self._check_clipped(geo)
+        return geo
+
+    def _check_clipped(self, geo: BarGeometry) -> None:
+        """Complain if the search box looks like it is cutting the bar in half.
+
+        Measured on a recording: the box can be pulled in until it hugs the bar
+        exactly and the track still reads to the pixel. One notch tighter than
+        that and detection does NOT fail — it succeeds, on a clipped track, and
+        every position downstream is a fraction of the wrong width. The reel
+        then aims at the wrong place for the whole fight. A track running hard
+        into the edge of the box is the only warning sign available, so say so
+        rather than let it read wrong in silence.
+        """
+        if getattr(self, "_clip_warned", False):
+            return
+        if (geo.x0 <= self.bar_search.left + 1
+                or geo.x1 >= self.bar_search.right - 1):
+            self._clip_warned = True
+            self.log("[warn] the reel bar runs right to the edge of the search "
+                     "box, so the box may be cutting it short — the bot would "
+                     "then aim against the wrong track width. Widen the 'Reel "
+                     "bar band' in Calibrate controls until there is a visible "
+                     "gap either side of the bar.")
 
     def _bite_now(self) -> bool:
         img = self.screen.grab(self.bite_roi)
@@ -203,7 +248,9 @@ class FishingEngine:
             img = self.screen.grab(self.bar_search)
             from .vision import progress_track_mask, _row_span
             pt = progress_track_mask(img)
-            need = img.shape[1] * self.cfg.detection.bar_min_width_frac
+            # Fraction of the game window, not of the search box — the box is
+            # croppable, the window is the fixed yardstick.
+            need = self.window.width * self.cfg.detection.bar_min_width_frac
             for y in range(0, pt.shape[0], 2):
                 run = _row_span(pt[y])
                 if run and (run[1] - run[0]) >= need:

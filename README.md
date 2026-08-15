@@ -94,6 +94,25 @@ matters.
 * **▭ areas** — drag inside to move, drag the white corner to resize.
 * **⦿ click points** — drag the dot onto the button.
 
+### The reel bar band is worth your time
+
+Of the fifteen, this is the one that pays. The bot has never confused the reel
+bar with something *near* it — it gets confused by things at the far edges of
+the screen that happen to look similar: your green health and energy bars on
+the left, the two-tone Power/Mastery strip on the right. Cropping the band in
+around the bar removes them from the picture entirely, which no amount of
+colour-matching can do as reliably.
+
+Measured on a recording, pulling the band in from full width to hugging the bar
+exactly cost nothing: the bar was still found in **100%** of the frames it was
+found in before, reading the same track edges to the pixel.
+
+One caveat, and it is the reason to leave a margin. A band that cuts *into* the
+bar does not fail cleanly — it still finds a bar, just a short one, and every
+position the reel aims at is then a fraction of the wrong width. So leave a
+visible gap either side. The bot warns you in the log if the bar reaches the
+edge of your band.
+
 **Re-shoot** retakes the screenshot (open the relevant dialogue in game first,
 so you can line things up against the real UI). **Save** writes to `config.json`.
 

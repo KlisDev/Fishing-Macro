@@ -36,8 +36,11 @@ def main() -> int:
     w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     fps = cap.get(cv2.CAP_PROP_FPS) or 60.0
-    search = Rect(0, 0, w, h).sub(0.0, cfg.detection.bar_search_top,
-                                  1.0, cfg.detection.bar_search_bottom)
+    window = Rect(0, 0, w, h)
+    search = window.sub(cfg.detection.bar_search_left,
+                        cfg.detection.bar_search_top,
+                        cfg.detection.bar_search_right,
+                        cfg.detection.bar_search_bottom)
 
     geo = None
     zw = None
@@ -52,7 +55,8 @@ def main() -> int:
         i += 1
         sub = frame[search.top:search.bottom, search.left:search.right]
         if geo is None:
-            geo = find_bar(sub, (search.left, search.top), cfg.colors, cfg.detection)
+            geo = find_bar(sub, (search.left, search.top), cfg.colors,
+                           cfg.detection, window.width)
             if geo is not None:
                 zw = geo.zone_w
         st = None

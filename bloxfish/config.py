@@ -191,16 +191,30 @@ class Timing:
 class Detection:
     """Where and how hard to look."""
 
-    # Reel bar search window, as fractions of the game window.
+    # Reel bar search window, as fractions of the game window. Worth cropping
+    # in on all four sides: everything the bot has ever mistaken for the reel
+    # bar lives at the edges of this box, not near the bar. The health and
+    # energy bars on the left are green and wide; the Power/Mastery bars on the
+    # right are a two-tone strip much like the progress strip. Excluding them
+    # outright is stronger than any colour rule that has to tell them apart.
     bar_search_top: float = 0.45
     bar_search_bottom: float = 0.98
-    # How much of the window the reel track may span. This is only a sanity
-    # bound, NOT how the bar is identified -- Roblox UI does not scale linearly
-    # with window size, so the track measured 0.46 of the window on one setup
-    # and 0.29 on another. A tight band around one machine's number rejected
-    # the real bar everywhere else, and the bot then cast on top of a live
-    # fight. What actually identifies the bar is structural: a green band with a
-    # two-tone progress strip directly beneath it, the zone sitting inside it.
+    bar_search_left: float = 0.0
+    bar_search_right: float = 1.0
+    # How much of the **game window** the reel track may span. Deliberately
+    # measured against the window and not against the search box, so cropping
+    # the box in does not move the goalposts: a track that is 0.46 of the
+    # window is still 0.46 here after you halve the box around it. Getting
+    # this wrong would silently reject the real bar the moment someone
+    # calibrated a tight box.
+    #
+    # This is only a sanity bound, NOT how the bar is identified -- Roblox UI
+    # does not scale linearly with window size, so the track measured 0.46 of
+    # the window on one setup and 0.29 on another. A tight band around one
+    # machine's number rejected the real bar everywhere else, and the bot then
+    # cast on top of a live fight. What actually identifies the bar is
+    # structural: a green band with a two-tone progress strip directly beneath
+    # it, the zone sitting inside it.
     bar_min_width_frac: float = 0.25
     bar_max_width_frac: float = 0.75
 

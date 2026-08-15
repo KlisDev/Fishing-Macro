@@ -96,12 +96,13 @@ def cmd_bite(cfg: Config, screen: Screen) -> None:
 
 def _acquire_bar(cfg: Config, screen: Screen, win, timeout=60.0):
     d = cfg.detection
-    search = win.sub(0.0, d.bar_search_top, 1.0, d.bar_search_bottom)
+    search = win.sub(d.bar_search_left, d.bar_search_top,
+                     d.bar_search_right, d.bar_search_bottom)
     print("waiting for a minigame...")
     deadline = time.perf_counter() + timeout
     while time.perf_counter() < deadline:
         geo = find_bar(screen.grab(search), (search.left, search.top),
-                       cfg.colors, d)
+                       cfg.colors, d, win.width)
         if geo is not None:
             print(f"bar: track x {geo.x0}..{geo.x1} (w={geo.width}), "
                   f"band y {geo.y0}..{geo.y1}, zone {geo.zone_w:.0f} px "

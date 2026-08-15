@@ -132,14 +132,19 @@ class Card(ctk.CTkFrame):
 # Entry:  (key, kind, config-holder, fields, label, description, image key)
 #   kind "box" -> search area   : drag to move, drag the corner to resize
 #   kind "dot" -> click point   : drag onto the button
-# A box needs 4 fields (l, t, r, b), or 2 for a full-width band (top, bottom).
+# A box needs 4 fields (l, t, r, b); a dot needs one, holding an (x, y) pair.
 CALIB_GROUPS = [
     ("Fishing", "🎣", "#22d3ee", [
         ("bar_search", "box", "detection",
-         ("bar_search_top", "bar_search_bottom"), "Reel bar band",
-         "Cover the strip of screen the reel minigame bar appears in. "
-         "Only the top and bottom edges matter — it always spans the full "
-         "width. Leave room above and below it.", "bar_search"),
+         ("bar_search_left", "bar_search_top",
+          "bar_search_right", "bar_search_bottom"), "Reel bar band",
+         "Cover the reel minigame bar, plus a small margin all round — a "
+         "finger's width above and below, a bit more at the sides. Crop it "
+         "IN as far as you comfortably can. Everything the bot has ever "
+         "mistaken for the reel bar sits outside it: your green health and "
+         "energy bars on the left, the Power/Mastery strip on the right. "
+         "Leaving them out is the single most useful thing on this screen.",
+         "bar_search"),
         ("bite", "box", "detection",
          ("bite_left", "bite_top", "bite_right", "bite_bottom"), "Bite marker",
          "Cover where the pink “!” pops up over your head. Keep it snug around "
@@ -260,7 +265,6 @@ class Calibrator(ctk.CTkToplevel):
     """
 
     HANDLE = 10     # corner grip for a free box
-    GRIP = 30       # half-width of the edge grips on a full-width band
     DOT_R = 10
 
     def __init__(self, master, cfg: Config) -> None:
@@ -466,10 +470,6 @@ class Calibrator(ctk.CTkToplevel):
         obj = getattr(self.cfg, holder)
         if kind != "box":
             return tuple(getattr(obj, fields[0]))
-        if len(fields) == 2:
-            # A full-width band. Left and right are not stored at all, so they
-            # are not editable either -- see _move.
-            return 0.0, getattr(obj, fields[0]), 1.0, getattr(obj, fields[1])
         return tuple(getattr(obj, f) for f in fields)
 
     def redraw(self) -> None:
@@ -496,23 +496,9 @@ class Calibrator(ctk.CTkToplevel):
                         # Only the selected item is labelled. Drawing all of
                         # them at once was unreadable clutter.
                         tid = self._text(x0 + 8, y0 + 13, f"{icon} {label}", col)
-                        g = lambda a, b_, c, d: self.canvas.create_rectangle(   # noqa: E731
-                            a, b_, c, d, outline="#ffffff", fill=col, width=2)
-                        if len(fields) == 2:
-                            # Height-only band: grips on the edges that exist.
-                            # It used to get a corner handle like any other
-                            # box, so you could drag its sides inwards, watch
-                            # it narrow, save -- and find it full width again
-                            # on the next open, because there is nowhere to
-                            # store a left or a right.
-                            cx = (x0 + x1) / 2
-                            grips["top"] = g(cx - self.GRIP, y0 - 4,
-                                             cx + self.GRIP, y0 + 4)
-                            grips["bottom"] = g(cx - self.GRIP, y1 - 4,
-                                                cx + self.GRIP, y1 + 4)
-                        else:
-                            grips["corner"] = g(x1 - self.HANDLE,
-                                                y1 - self.HANDLE, x1, y1)
+                        grips["corner"] = self.canvas.create_rectangle(
+                            x1 - self.HANDLE, y1 - self.HANDLE, x1, y1,
+                            outline="#ffffff", fill=col, width=2)
                     self.shapes[key] = {"kind": "box", "id": rid, "label": tid,
                                         "grips": grips, "entry": entry}
                 else:
@@ -549,16 +535,10 @@ class Calibrator(ctk.CTkToplevel):
             except Exception:                          # noqa: BLE001
                 pass                                   # never break selection
             self.d_img.image = img
-            if kind != "box":
-                tip = "Drag the dot onto the button"
-            elif len(_f) == 2:
-                tip = ("Drag the band up or down • drag the white grip on the "
-                       "top or bottom edge to change its height (it always "
-                       "spans the full width)")
-            else:
-                tip = ("Drag inside the box to move it • drag the white corner "
-                       "to resize")
-            self.hint.configure(text=tip)
+            self.hint.configure(
+                text="Drag inside the box to move it • drag the white corner "
+                     "to resize" if kind == "box"
+                else "Drag the dot onto the button")
         self.redraw()
 
     # -- dragging (selected item only) -------------------------------------
@@ -596,10 +576,6 @@ class Calibrator(ctk.CTkToplevel):
             x0, y0, x1, y1 = x0 + dx, y0 + dy, x1 + dx, y1 + dy
         elif mode == "corner":
             x1, y1 = max(x0 + 26, x1 + dx), max(y0 + 20, y1 + dy)
-        elif mode == "bottom":
-            y1 = max(y0 + 20, y1 + dy)
-        elif mode == "top":
-            y0 = min(y1 - 20, y0 + dy)
         self.canvas.coords(it["id"], x0, y0, x1, y1)
         self.drag = (mode, ev.x, ev.y)
         self._commit(self.sel)
@@ -644,17 +620,10 @@ class Calibrator(ctk.CTkToplevel):
         if it["kind"] == "box":
             x0, y0, x1, y1 = self._box_px(*self._fracs(entry))
             self.canvas.coords(it["id"], x0, y0, x1, y1)
-            cx = (x0 + x1) / 2
-            grips = it.get("grips", {})
-            if "corner" in grips:
-                self.canvas.coords(grips["corner"], x1 - self.HANDLE,
+            corner = it.get("grips", {}).get("corner")
+            if corner is not None:
+                self.canvas.coords(corner, x1 - self.HANDLE,
                                    y1 - self.HANDLE, x1, y1)
-            if "top" in grips:
-                self.canvas.coords(grips["top"], cx - self.GRIP, y0 - 4,
-                                   cx + self.GRIP, y0 + 4)
-            if "bottom" in grips:
-                self.canvas.coords(grips["bottom"], cx - self.GRIP, y1 - 4,
-                                   cx + self.GRIP, y1 + 4)
             self._place_text(it.get("label"), x0 + 8, y0 + 13)
         else:
             x, y = self._dot_px(*self._fracs(entry))
