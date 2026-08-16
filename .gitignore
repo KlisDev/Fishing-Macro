@@ -9,7 +9,9 @@ debug/
 config.json
 diag/
 
-# Gameplay recordings used by tools/vision_suite.py. Kept out of the repo:
-# they are several hundred MB and they show usernames, levels and balances.
+# Diagnostic captures. Recordings for tools/vision_suite.py live OUTSIDE the
+# project folder entirely — it gets zipped and sent to testers, so a few
+# hundred MB of gameplay (showing usernames, levels and balances) must not be
+# sitting in it.
 clips/
 record/

@@ -7,10 +7,14 @@ tuned on one machine survived long enough to cost three bug reports. This runs
 the real detectors over recorded gameplay and reports the numbers that actually
 predict a failure in the field.
 
-    python tools/vision_suite.py clips/                 # every video in a folder
+    python tools/vision_suite.py ../bloxfish-clips      # every video in a folder
     python tools/vision_suite.py a.mp4 b.mp4            # named files
-    python tools/vision_suite.py clips/ --no-split      # one segment per file
-    python tools/vision_suite.py clips/ --csv out.csv
+    python tools/vision_suite.py <folder> --no-split    # one segment per file
+    python tools/vision_suite.py <folder> --csv out.csv
+
+Keep the recordings OUTSIDE the project folder. They are hundreds of MB and
+the project gets zipped and sent to testers; they also show usernames, levels
+and balances, so they must never travel with it.
 
 Clips that are several recordings concatenated together are split at scene
 cuts, so each scenario is scored on its own instead of being averaged into the

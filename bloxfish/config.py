@@ -514,6 +514,42 @@ class Config:
     low_bait_warn: int = 5
 
     @staticmethod
+    def user_fields() -> set:
+        """Everything in config.json that is the user's to decide.
+
+        Nothing else may be written there, and this is not a tidiness rule --
+        it is the difference between a fix shipping and not shipping.
+
+        `save()` used to dump the entire dataclass, tuning constants included.
+        The calibrator calls `save()`, so the first time anyone lined up a box
+        their config.json froze every threshold in the program at that day's
+        value. From then on the code could be updated all it liked and those
+        numbers would never move, because a stale file always wins over a
+        changed default.
+
+        That is exactly what happened. A tester reported the bar still being
+        lost mid-fight after the fix for it had shipped: their code had the
+        fix, their config.json still said `bar_track_min_frac: 0.35`. Their own
+        lossless captures put the track at a minimum of 0.351 -- three
+        thousandths of margin -- where the shipped 0.12 would have given three
+        times the headroom. The fix was on their disk and could not reach them.
+        """
+        boxes = ["left", "top", "right", "bottom"]
+        fields = {"rod_slot", "window_title", "start_stop_key", "quit_key"}
+        fields |= {f"detection.{p}_{s}" for p in ("bar_search", "bite", "meter")
+                   for s in boxes}
+        fields |= {f"dialog.{s}" for s in boxes}
+        fields |= {f"dialog.learn_{s}" for s in boxes} | {"dialog.learn_click"}
+        fields |= {f"shop.menu_{s}" for s in boxes}
+        fields |= {f"shop.craft_btn_{s}" for s in boxes}
+        fields |= {f"shop.{k}" for k in ("npc", "bait_per_purchase", "center",
+                                         "menu_item1", "menu_item2", "menu_last",
+                                         "craft_plus", "craft_button", "craft_close")}
+        fields |= {"sell.enabled", "sell.every", "chest.enabled",
+                   "timing.slow_rod_flick", "timing.fast_bite"}
+        return fields
+
+    @staticmethod
     def load(path: Path | None = None) -> "Config":
         """Defaults, overlaid with config.json if it is readable.
 
@@ -531,18 +567,30 @@ class Config:
                 return cfg
             data = json.loads(raw)
             if isinstance(data, dict):
-                _merge(cfg, data)
+                _merge(cfg, data, Config.user_fields())
         except Exception:                       # noqa: BLE001
             # Keep the broken file for the user to look at; carry on defaulted.
             pass
         return cfg
 
     def save(self, path: Path | None = None) -> None:
+        """Write only the user's own settings. See `user_fields`."""
         path = path or CONFIG_PATH
-        path.write_text(json.dumps(asdict(self), indent=2), encoding="utf-8")
+        keep = Config.user_fields()
+        full = asdict(self)
+        out: dict = {}
+        for key, value in full.items():
+            if key in keep:
+                out[key] = value
+            elif isinstance(value, dict):
+                section = {k: v for k, v in value.items()
+                           if f"{key}.{k}" in keep}
+                if section:
+                    out[key] = section
+        path.write_text(json.dumps(out, indent=2), encoding="utf-8")
 
 
-def _merge(obj, data: dict) -> None:
+def _merge(obj, data: dict, keep: set | None = None, prefix: str = "") -> None:
     """Overlay `data` onto a dataclass, skipping anything that does not fit.
 
     Everything here is defensive on purpose: the JSON comes from a file people
@@ -556,8 +604,14 @@ def _merge(obj, data: dict) -> None:
         if not hasattr(obj, key):
             continue
         current = getattr(obj, key)
+        path = f"{prefix}{key}"
         if is_dataclass(current):
-            _merge(current, value)              # ignores non-dicts, incl. null
+            _merge(current, value, keep, f"{path}.")   # ignores non-dicts/null
+            continue
+        if keep is not None and path not in keep:
+            # A tuning constant left behind by an older save. Ignoring it is
+            # what lets a shipped fix actually reach someone who has calibrated.
+            continue
         elif isinstance(current, tuple):
             if isinstance(value, (list, tuple)) and len(value) == len(current):
                 try:

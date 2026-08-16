@@ -193,7 +193,7 @@ bloxfish/
   controller.py  the reel controller
   engine.py      the state machine: cast -> bite -> reel -> catch
   shop.py        buying bait and selling fish at the NPC
-  config.py      every tunable value, saved to config.json
+  config.py      every tunable value (only your own settings are saved)
 tools/           calibration and offline replay utilities
 ```
 
@@ -203,6 +203,11 @@ tools/           calibration and offline replay utilities
 
 * Windows only. It uses Windows input APIs directly, because Roblox ignores
   synthetic window messages.
-* `config.json` is created on first run and is yours — it is not tracked by git.
+* `config.json` holds **only your own settings** — the calibration boxes and
+  the answers to the setup questions. Detector thresholds deliberately stay in
+  the code, so an update can improve them. A saved file used to include every
+  threshold too, which quietly pinned them forever: one tester kept hitting a
+  bug months after the fix shipped, because their config still carried the old
+  number. Old files are migrated automatically. Not tracked by git.
 * This is a personal project shared as-is. Use it at your own risk; automating
   a game may be against its rules.
