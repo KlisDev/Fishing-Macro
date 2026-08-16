@@ -8,3 +8,8 @@ debug/
 .deps_installed
 config.json
 diag/
+
+# Gameplay recordings used by tools/vision_suite.py. Kept out of the repo:
+# they are several hundred MB and they show usernames, levels and balances.
+clips/
+record/

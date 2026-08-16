@@ -136,6 +136,8 @@ def main() -> int:
     ap.add_argument("--now", action="store_true", help="skip the hotkey wait")
     ap.add_argument("--diag", action="store_true",
                     help="save the pixels behind any detection failure to diag/")
+    ap.add_argument("--record", action="store_true",
+                    help="save the reel strip while it works, to record/")
     ap.add_argument("--config", default=None)
     args = ap.parse_args()
 
@@ -144,6 +146,8 @@ def main() -> int:
         cfg.debug = True
     if args.diag:
         cfg.diag = True
+    if args.record:
+        cfg.record = True
 
     engine = FishingEngine(cfg)
     worker: threading.Thread | None = None

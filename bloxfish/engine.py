@@ -258,6 +258,45 @@ class FishingEngine:
         except Exception:                              # noqa: BLE001
             pass
 
+    def _record(self, geo) -> None:
+        """Save the regions the detectors read, losslessly, while things work.
+
+        `--diag` only fires on a failure, which is too late for the questions
+        that keep coming up. Every colour threshold in vision.py is a question
+        about what a pixel really is, and a re-encoded gameplay video cannot
+        answer one: a tester's track measured (24,32,32) where the author's
+        measured (34,34,34), and their recording also renders pure white as
+        (248,251,251), so part of that gap is the encoder and part is the
+        machine. There is no way to tell which from the video. A PNG of the
+        strip is the same bytes the bot sampled, and the strip is small enough
+        that a whole session costs a few MB.
+        """
+        if not self.cfg.record:
+            return
+        now = time.perf_counter()
+        if now - getattr(self, "_rec_at", 0.0) < self.cfg.record_every:
+            return
+        self._rec_at = now
+        n = self._rec_n = getattr(self, "_rec_n", 0) + 1
+        if n > self.cfg.record_max:
+            return
+        try:
+            import cv2
+            from pathlib import Path as _P
+            out = _P(__file__).resolve().parent.parent / "record"
+            out.mkdir(exist_ok=True)
+            cv2.imwrite(str(out / f"{n:04d}_strip.png"),
+                        self.screen.grab(geo.strip))
+            if geo.prog is not None:
+                cv2.imwrite(str(out / f"{n:04d}_prog.png"),
+                            self.screen.grab(geo.prog))
+            if n == 1:
+                self.log(f"[record] saving detector input to record/ "
+                         f"(every {self.cfg.record_every}s, max "
+                         f"{self.cfg.record_max})")
+        except Exception:                              # noqa: BLE001
+            pass
+
     def _minigame_running(self) -> bool:
         """Independent check that a reel minigame is on screen.
 
@@ -543,6 +582,7 @@ class FishingEngine:
                         continue
                     break
                 continue
+            self._record(geo)
             if stalling:
                 stalling = False
                 self.log("[reel] zone visible again")

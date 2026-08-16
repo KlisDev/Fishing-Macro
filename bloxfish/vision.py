@@ -294,7 +294,7 @@ def find_bar(img: np.ndarray, origin: tuple[int, int],
     parts = [stats[i] for i in range(1, n)
              if stats[i, cv2.CC_STAT_HEIGHT] >= 20 and stats[i, cv2.CC_STAT_AREA] >= 800]
     if not parts:
-        return None
+        return _find_bar_by_strip(img, origin, colors, det, min_w, max_w)
 
     ptrack = progress_track_mask(img)
     tmask = track_mask(img, colors)
@@ -370,6 +370,122 @@ def find_bar(img: np.ndarray, origin: tuple[int, int],
             prog_rows=(max(prog_rows) + 1 - min(prog_rows)) if prog_rows else 0,
         )
 
+    return _find_bar_by_strip(img, origin, colors, det, min_w, max_w)
+
+
+def _find_bar_by_strip(img: np.ndarray, origin: tuple[int, int], colors: Colors,
+                       det: Detection, min_w: int,
+                       max_w: int) -> BarGeometry | None:
+    """Locate the bar from its progress strip upwards, with no green needed.
+
+    The main path starts from a green blob, which quietly assumes the zone is
+    green when we go looking. It is not always: while the fish is outside it
+    the game desaturates the zone, and a sustained escape fades it to a fully
+    neutral grey. Measured on one recording, in the band rows where the bar
+    plainly was, the strict `zone_mask` matched **zero** pixels while the
+    tracking mask matched 240-327 per row — so `find_bar` had no candidate to
+    start from and reported no minigame for 1252 of 1256 frames.
+
+    That is the worst possible time to go blind. The bot arrives here right
+    after a bite, and if the zone is grey for the whole `bite_to_bar_timeout`
+    it never acquires the bar, gives up, and recasts into a live fight.
+
+    The progress strip has no such problem: nothing is ever drawn over it and
+    it does not change colour, which is why it is already the thing that
+    *confirms* a candidate. Here it becomes the thing that finds one. Walk up
+    from the strip while the rows still look like bar (dark track, zone in
+    either state, or fish tile) and that is the band.
+    """
+    h, w = img.shape[:2]
+    ptrack = progress_track_mask(img)
+    tmask = track_mask(img, colors)
+    zmask = zone_mask_tracking(img, colors)
+    fmask = fish_mask(img, colors)
+    barish = tmask | zmask | fmask
+
+    # Rows that carry a full-width two-tone run: the strip, and only the strip.
+    runs: list[tuple[int, int, int]] = []
+    for y in range(h):
+        r = _row_span(ptrack[y])
+        if r and (r[1] - r[0]) >= min_w:
+            runs.append((y, r[0], r[1]))
+    if not runs:
+        return None
+
+    # Group the rows into strips, then try each from the thickest down.
+    groups: list[list[tuple[int, int, int]]] = [[runs[0]]]
+    for rec in runs[1:]:
+        if rec[0] - groups[-1][-1][0] <= 3:
+            groups[-1].append(rec)
+        else:
+            groups.append([rec])
+
+    for grp in sorted(groups, key=len, reverse=True):
+        p0, p1 = grp[0][0], grp[-1][0] + 1
+        x0 = min(a for _, a, _ in grp)
+        x1 = max(b for _, _, b in grp)
+        if not (min_w <= (x1 - x0) <= max_w):
+            continue
+
+        # Walk up from the strip for the playfield band. The two are not
+        # flush: the bar draws a near-black border between them, measured at
+        # (9,7,8) and about 10 rows deep, which is neither track nor zone. So
+        # step over the gap to the first bar-like row before walking, rather
+        # than treating the border as the end of the bar and giving up on it.
+        need = 0.5
+        gap_limit = max(12, int(h * 0.05))
+        band_bot = None
+        for y in range(p0 - 1, max(-1, p0 - gap_limit), -1):
+            if barish[y, x0:x1].mean() >= need:
+                band_bot = y
+                break
+        if band_bot is None:
+            continue
+        y_top = band_bot
+        misses = 0
+        for y in range(band_bot - 1, -1, -1):
+            if barish[y, x0:x1].mean() >= need:
+                y_top = y
+                misses = 0
+            else:
+                misses += 1
+                if misses >= 4:
+                    break
+        y_bot = band_bot + 1
+        # A real strip has a deep playfield above it; a HUD bar has almost
+        # nothing. This is the gate that keeps the fallback off the level XP
+        # bar in the bottom-left corner, which is two-tone, ~0.19 of the screen
+        # wide and a perfectly good "progress strip" as far as the mask is
+        # concerned. Measured band-height / strip-height: 4.4 and 5.1 for real
+        # bars on two machines, 0.2 for the XP bar. Without this the fallback
+        # reported 102 phantom bars against 19 real ones on one recording --
+        # worse than the health-bar confusion it was written to replace.
+        prog_h = p1 - p0
+        if (y_bot - y_top) < max(10, prog_h * 2):
+            continue
+
+        band = zmask[y_top + 3:y_bot - 3, x0:x1]
+        if band.size == 0:
+            continue
+        zcols = np.flatnonzero(band.sum(axis=0) > band.shape[0] * 0.5)
+        if len(zcols) < 4:
+            continue
+        zone_l, zone_r = int(zcols.min()), int(zcols.max())
+        if (zone_r - zone_l) > (x1 - x0) * 0.9:
+            continue
+
+        ox, oy = origin
+        y_t, y_b = y_top + 3, y_bot - 3
+        strip = Rect(ox + x0, oy + y_t, max(1, x1 - x0), max(1, y_b - y_t))
+        prog = Rect(ox + x0, oy + p0, max(1, x1 - x0), max(1, p1 - p0))
+        full = Rect(ox + x0, oy + y_t, max(1, x1 - x0), max(1, p1 - y_t))
+        return BarGeometry(
+            x0=ox + x0, x1=ox + x1, y0=oy + y_t, y1=oy + y_b,
+            strip=strip, zone_w=float(zone_r - zone_l), prog=prog, full=full,
+            band_rows=y_b - y_t,
+            prog_row0=p0 - y_t,
+            prog_rows=p1 - p0,
+        )
     return None
 
 

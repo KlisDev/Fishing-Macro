@@ -221,8 +221,16 @@ class Detection:
     # cast on top of a live fight. What actually identifies the bar is
     # structural: a green band with a two-tone progress strip directly beneath
     # it, the zone sitting inside it.
-    bar_min_width_frac: float = 0.25
-    bar_max_width_frac: float = 0.75
+    # Observed across recordings from several players: 0.271, 0.286, 0.457,
+    # 0.577 and 0.969 of the window. Roblox does not scale this UI linearly
+    # with window size, so a player on a small window gets a bar that fills
+    # nearly the whole screen. The old 0.25..0.75 range was set from the
+    # narrow end of that spread and silently discarded the 0.969 bar for an
+    # entire recording -- 1252 frames of "no minigame" while one was plainly
+    # on screen. These are a sanity bound only; the structure (progress strip
+    # beneath, zone inside) is what actually identifies the bar.
+    bar_min_width_frac: float = 0.18
+    bar_max_width_frac: float = 0.99
 
     # Bite marker search window, as fractions of the game window. A tight box
     # around where the '!' rides above the character. This deliberately excludes
@@ -487,6 +495,13 @@ class Config:
     # Turn on with `python run.py --diag` when reporting a bug.
     diag: bool = False
     diag_max: int = 40
+    # Save the reel strip while things are WORKING, into record/. `--record`.
+    # Unlike diag/ this samples success, which is what colour questions need:
+    # a lossless PNG of the strip settles what a track pixel really is on your
+    # machine, where a re-encoded video cannot.
+    record: bool = False
+    record_every: float = 2.0      # seconds between saves
+    record_max: int = 120
 
     # Hotbar slot holding the fishing rod ('1'-'9' or '0'). Pressing it toggles
     # the rod in and out of the character's hands, which is the known cure for
