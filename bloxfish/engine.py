@@ -20,8 +20,8 @@ from .controller import ReelController
 from .inputs import Keyboard, Mouse, valid_slot
 from . import shop as shop_mod
 from .vision import (
-    BarGeometry, charge_meter_score, find_bar, find_bite_marker,
-    progress_bar_present, read_bar, read_progress,
+    BarGeometry, charge_meter_score, find_bar, find_bar_by_strip,
+    find_bite_marker, progress_bar_present, read_bar, read_progress,
 )
 
 
@@ -300,29 +300,34 @@ class FishingEngine:
     def _minigame_running(self) -> bool:
         """Independent check that a reel minigame is on screen.
 
-        Deliberately does not use `find_bar`. That looks for the green zone
-        first, and the player's health bar is also green and also inside the
-        search region - so on some layouts it locks onto the health bar and
-        reports no minigame for an entire fight. This looks only for the
-        progress strip, which nothing else on screen resembles.
+        Deliberately does not go through the green-zone path. That looks for
+        the zone first, and the player's health bar is also green and also
+        inside the search region, so on some layouts it locks onto the health
+        bar and reports no minigame for an entire fight.
 
-        This is the guard that makes "cast while a fish is still on the line"
-        impossible, whatever the bar detector happens to be doing.
+        It used to be cruder than that: any two-tone run wider than
+        `bar_min_width_frac` of the window counted, on the reasoning that
+        nothing else on screen resembles the progress strip. Something does.
+        The level XP bar in the bottom-left corner is two-tone and 0.19 of the
+        screen wide, and when that fraction was lowered from 0.25 to 0.18 the
+        threshold at 1920 px went from 480 to 345 -- under the XP bar's 365.
+        The guard then reported a minigame permanently and the bot never cast
+        again: `casts=0`, "a minigame is still running" forever.
+
+        So it now uses the structural finder, which wants a real playfield band
+        above the strip and rejects a bare HUD bar. Still independent of the
+        green zone; no longer fooled by the corner of the screen.
         """
         try:
             img = self.screen.grab(self.bar_search)
-            from .vision import progress_track_mask, _row_span
-            pt = progress_track_mask(img)
-            # Fraction of the game window, not of the search box — the box is
-            # croppable, the window is the fixed yardstick.
-            need = self.window.width * self.cfg.detection.bar_min_width_frac
-            for y in range(0, pt.shape[0], 2):
-                run = _row_span(pt[y])
-                if run and (run[1] - run[0]) >= need:
-                    return True
+            d = self.cfg.detection
+            return find_bar_by_strip(
+                img, (self.bar_search.left, self.bar_search.top),
+                self.cfg.colors, d,
+                int(self.window.width * d.bar_min_width_frac),
+                int(self.window.width * d.bar_max_width_frac)) is not None
         except Exception:                              # noqa: BLE001
-            pass
-        return False
+            return False
 
     def _meter_miss(self, peak: int) -> None:
         """Once the meter has been missed a few times, name the likely cause.
@@ -513,6 +518,15 @@ class FishingEngine:
         next_tick = time.perf_counter()
         last_progress = None
         ticks = 0
+        # Precision accounting. A bang-bang controller cannot sit still, so a
+        # little error is normal; what matters is whether the fish ever leaves
+        # the zone (`out_ticks`) and how far it strays (`err_max`). Reporting
+        # these turns "it feels less precise" into a number the next recording
+        # can confirm or refute.
+        err_sum = 0.0
+        err_max = 0.0
+        out_ticks = 0
+        drive_ticks = 0
         t0 = time.perf_counter()
 
         cc = self.cfg.chest
@@ -628,6 +642,16 @@ class FishingEngine:
             d = self.controller.step(now, zone_c, target, zone_half, fish_half)
             self.mouse.set(d.hold)
 
+            # Only score while actually chasing the fish, not during a chest
+            # detour (the zone is deliberately off the fish then).
+            if not (chest_until and now < chest_until):
+                ae = abs(d.error)
+                err_sum += ae
+                err_max = max(err_max, ae)
+                if ae > max(zone_half, 1e-6):
+                    out_ticks += 1
+                drive_ticks += 1
+
             # Progress comes from the same grab, so reading it every tick is
             # free. The chest logic needs it to decide whether a detour is
             # affordable.
@@ -654,8 +678,12 @@ class FishingEngine:
             self.log(f"[reel] bar came back after {elapsed:.2f} s — still "
                      f"fishing, not a catch")
             return False
+        err_rms = (err_sum / drive_ticks) if drive_ticks else 0.0
+        out_pct = (100.0 * out_ticks / drive_ticks) if drive_ticks else 0.0
         self.log(f"[reel] done in {elapsed:.2f} s at {ticks/max(elapsed,1e-3):.0f} Hz "
-                 f"(accel est {self.controller.accel:.2f} track/s^2)")
+                 f"(accel est {self.controller.accel:.2f} track/s^2) "
+                 f"| err avg {err_rms*100:.1f}% max {err_max*100:.1f}% "
+                 f"outside {out_pct:.0f}%")
         return True
 
     def _dismiss_catch(self) -> None:

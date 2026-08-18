@@ -48,7 +48,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from bloxfish.capture import Rect                       # noqa: E402
 from bloxfish.config import Config                      # noqa: E402
 from bloxfish.vision import (                           # noqa: E402
-    find_bar, find_bite_marker, progress_bar_present, read_bar, track_mask,
+    find_bar, find_bar_by_strip, find_bite_marker, progress_bar_present,
+    read_bar, track_mask,
 )
 
 VIDEO_EXT = {".mp4", ".mkv", ".mov", ".avi", ".wmv"}
@@ -60,6 +61,12 @@ MIN_SEGMENT = 45
 # has a few frames where the bar is genuinely half-drawn.
 MIN_STEERED = 0.98
 MAX_PHANTOM = 0.02
+# `_minigame_running` false-positives. This one is not a quality metric, it is
+# a brick: the engine refuses to cast while it believes a minigame is on, so a
+# guard that is wrong even some of the time stops the bot dead. It shipped
+# wrong once -- the level XP bar matched -- and the log read "a minigame is
+# still running" forever with casts=0.
+MAX_GHOST = 0.01
 
 
 @dataclass
@@ -75,6 +82,7 @@ class Result:
     widths: set = field(default_factory=set)
     bites: int = 0
     bites_live: int = 0
+    ghost_guard: int = 0        # "a minigame is running" while none is
     acquired: bool = False
 
     @property
@@ -86,6 +94,11 @@ class Result:
         dead = self.frames - self.live
         return self.phantom / dead if dead else 0.0
 
+    @property
+    def ghost_rate(self) -> float:
+        dead = self.frames - self.live
+        return self.ghost_guard / dead if dead else 0.0
+
     def verdict(self) -> str:
         if not self.acquired:
             return "NO BAR"
@@ -95,6 +108,8 @@ class Result:
             return "FAIL steer"
         if self.phantom_rate > MAX_PHANTOM:
             return "FAIL phantom"
+        if self.ghost_rate > MAX_GHOST:
+            return "FAIL ghost"
         return "pass"
 
 
@@ -173,6 +188,14 @@ def score(path: Path, lo: int, hi: int, cfg: Config, name: str) -> Result:
                 elif st is not None:
                     res.phantom += 1
 
+        # The engine's cast guard, run exactly as the engine runs it.
+        if not live:
+            sb = frame[search.top:search.bottom, search.left:search.right]
+            if find_bar_by_strip(sb, (search.left, search.top), cfg.colors, d,
+                                 int(w * d.bar_min_width_frac),
+                                 int(w * d.bar_max_width_frac)) is not None:
+                res.ghost_guard += 1
+
         roi = frame[bite.top:bite.bottom, bite.left:bite.right]
         if roi.size and find_bite_marker(roi, cfg.colors, d,
                                          (bite.left, bite.top)) is not None:
@@ -211,7 +234,7 @@ def main() -> int:
           f"bar width gate {cfg.detection.bar_min_width_frac}"
           f"..{cfg.detection.bar_max_width_frac}\n")
     hdr = (f"{'clip':<34}{'size':>10}{'frames':>7}{'live':>6}"
-           f"{'steered':>9}{'phantom':>8}{'track min':>10}{'bites':>6}  verdict")
+           f"{'steered':>9}{'phantom':>8}{'ghost':>7}{'track min':>10}{'bites':>6}  verdict")
     print(hdr)
     print("-" * len(hdr))
 
@@ -229,8 +252,9 @@ def main() -> int:
             tmin = f"{min(r.track_cov):.3f}" if r.track_cov else "-"
             steer = f"{r.steer_rate:.1%}" if r.live else "-"
             ph = f"{r.phantom_rate:.1%}" if r.frames > r.live else "-"
+            gh = f"{r.ghost_rate:.1%}" if r.frames > r.live else "-"
             print(f"{label[:33]:<34}{r.size:>10}{r.frames:>7}{r.live:>6}"
-                  f"{steer:>9}{ph:>8}{tmin:>10}{r.bites:>6}  {r.verdict()}")
+                  f"{steer:>9}{ph:>8}{gh:>7}{tmin:>10}{r.bites:>6}  {r.verdict()}")
 
     live = sum(r.live for r in results)
     steered = sum(r.steered for r in results)
@@ -238,9 +262,11 @@ def main() -> int:
     phantom = sum(r.phantom for r in results)
     bad = [r for r in results if r.verdict().startswith(("FAIL", "NO BAR"))]
     print("-" * len(hdr))
+    ghost = sum(r.ghost_guard for r in results)
     print(f"{len(results)} segments   steered {steered}/{live} "
           f"({steered / max(1, live):.1%})   "
-          f"phantom {phantom}/{dead} ({phantom / max(1, dead):.1%})")
+          f"phantom {phantom}/{dead} ({phantom / max(1, dead):.1%})   "
+          f"ghost-guard {ghost}/{dead} ({ghost / max(1, dead):.1%})")
     widths = sorted({w for r in results for w in r.widths})
     if widths:
         print(f"bar width seen: {min(widths):.3f}..{max(widths):.3f} of window "

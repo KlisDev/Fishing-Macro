@@ -294,7 +294,7 @@ def find_bar(img: np.ndarray, origin: tuple[int, int],
     parts = [stats[i] for i in range(1, n)
              if stats[i, cv2.CC_STAT_HEIGHT] >= 20 and stats[i, cv2.CC_STAT_AREA] >= 800]
     if not parts:
-        return _find_bar_by_strip(img, origin, colors, det, min_w, max_w)
+        return find_bar_by_strip(img, origin, colors, det, min_w, max_w)
 
     ptrack = progress_track_mask(img)
     tmask = track_mask(img, colors)
@@ -370,10 +370,10 @@ def find_bar(img: np.ndarray, origin: tuple[int, int],
             prog_rows=(max(prog_rows) + 1 - min(prog_rows)) if prog_rows else 0,
         )
 
-    return _find_bar_by_strip(img, origin, colors, det, min_w, max_w)
+    return find_bar_by_strip(img, origin, colors, det, min_w, max_w)
 
 
-def _find_bar_by_strip(img: np.ndarray, origin: tuple[int, int], colors: Colors,
+def find_bar_by_strip(img: np.ndarray, origin: tuple[int, int], colors: Colors,
                        det: Detection, min_w: int,
                        max_w: int) -> BarGeometry | None:
     """Locate the bar from its progress strip upwards, with no green needed.
