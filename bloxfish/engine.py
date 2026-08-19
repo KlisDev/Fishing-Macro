@@ -38,6 +38,7 @@ class Stats:
     bites: int = 0
     catches: int = 0
     missed_bar: int = 0
+    escapes: int = 0
     bite_timeouts: int = 0
     purchases: int = 0
     sales: int = 0
@@ -47,6 +48,7 @@ class Stats:
         mins = (time.perf_counter() - self.started) / 60.0
         rate = self.catches / mins if mins > 0.01 else 0.0
         return (f"casts={self.casts} bites={self.bites} catches={self.catches} "
+                f"escapes={self.escapes} "
                 f"missed_bar={self.missed_bar} timeouts={self.bite_timeouts} "
                 f"buys={self.purchases} sells={self.sales} "
                 f"| {rate:.1f} fish/min over {mins:.1f} min")
@@ -533,6 +535,8 @@ class FishingEngine:
         chest_min_w = int(cc.min_width_frac * track_w) if cc.enabled else 0
         chest_until = 0.0          # while now < this, the zone stays on a chest
         chest_at: float | None = None
+        chest_on = False           # has the zone actually reached the chest?
+        chest_since = 0.0          # when the chase started, for the log
         chest_done: list[float] = []
         progress = None
         stalling = False
@@ -629,18 +633,40 @@ class FishingEngine:
             target = fish_c
             if chest_until and now < chest_until and chest_at is not None:
                 target = chest_at
+                # The hold has to measure time spent ON the chest, not time
+                # since it was spotted. It used to start counting at detection,
+                # so the flight out to the tile came out of the 2.5 s -- and
+                # the zone accelerates at ~2 track/s^2, so a chest half a track
+                # away eats about a second of it. That is why chests were
+                # reached and then not collected. Start the clock on arrival.
+                if not chest_on and abs(zone_c - chest_at) <= max(zone_half, 0.02):
+                    chest_on = True
+                    chest_until = now + cc.hold
+                    self.log(f"[chest] reached it after {now - chest_since:.1f}s "
+                             f"— holding {cc.hold:.1f}s")
             elif chest_until:
                 chest_until = 0.0
                 self.controller.retarget()
-                self.log(f"[chest] collected at {chest_at:.2f}, back to the fish")
+                if chest_on:
+                    self.log(f"[chest] collected at {chest_at:.2f}, back to the fish")
+                else:
+                    # Never actually got there inside the grace window. Say so:
+                    # silently "collecting" a chest the zone never touched is
+                    # how this looked fine in the log while missing in game.
+                    self.log(f"[chest] gave up on {chest_at:.2f} — could not "
+                             f"reach it in time, back to the fish")
                 chest_at = None
+                chest_on = False
             elif cc.enabled and st.chest_c is not None and len(chest_done) < cc.max_grabs:
                 x = (st.chest_c - geo.x0) / track_w
                 fresh = all(abs(x - d0) > cc.same_chest_frac for d0 in chest_done)
                 affordable = progress is None or progress >= cc.min_progress
                 if fresh and affordable:
                     chest_at = x
-                    chest_until = now + cc.hold
+                    chest_on = False
+                    chest_since = now
+                    # Deadline to *get there*; once there it becomes now + hold.
+                    chest_until = now + cc.hold + cc.travel_grace
                     chest_done.append(x)
                     self.controller.retarget()
                     self.log(f"[chest] grabbing at {x:.2f} for {cc.hold:.1f}s")
@@ -687,10 +713,25 @@ class FishingEngine:
             return False
         err_rms = (err_sum / drive_ticks) if drive_ticks else 0.0
         out_pct = (100.0 * out_ticks / drive_ticks) if drive_ticks else 0.0
+        # Caught, or did it get away? The bar vanishes either way, so "the reel
+        # ended" was being counted as a catch unconditionally -- an escaped fish
+        # went in the tally as a success and nothing ever said otherwise. The
+        # progress strip is the difference: it climbs to full on a catch and
+        # falls back toward empty while the fish is outside the zone, so the
+        # last value read before the bar went tells the two apart.
+        self._last_progress = progress
+        escaped = progress is not None and progress < self.cfg.detection.catch_progress_min
+        self._last_escaped = escaped
         self.log(f"[reel] done in {elapsed:.2f} s at {ticks/max(elapsed,1e-3):.0f} Hz "
                  f"(accel est {self.controller.accel:.2f} track/s^2) "
                  f"| err avg {err_rms*100:.1f}% max {err_max*100:.1f}% "
-                 f"outside {out_pct:.0f}%")
+                 f"outside {out_pct:.0f}%"
+                 + (f" | progress {progress:.0%}" if progress is not None else ""))
+        if escaped:
+            self.stats.escapes += 1
+            self.log(f"[reel] the fish got away (progress only {progress:.0%}, "
+                     f"outside the zone {out_pct:.0f}% of the fight)")
+            self._dump_diag("escaped")
         return True
 
     def _dismiss_catch(self) -> None:
@@ -723,9 +764,14 @@ class FishingEngine:
             self._sleep(t.catch_click_gap)
             self.mouse.click()
 
-        self.stats.catches += 1
-        self._since_sell += 1
-        self.log(f"[catch] #{self.stats.catches} — recasting")
+        if getattr(self, "_last_escaped", False):
+            # Still dismiss and recast -- the screen state is the same -- but do
+            # not claim a fish that swam off.
+            self.log("[catch] none — that one escaped; recasting")
+        else:
+            self.stats.catches += 1
+            self._since_sell += 1
+            self.log(f"[catch] #{self.stats.catches} — recasting")
 
         # Never wait for a card to fade. With the flick there is none; without
         # it, some ignore the dismiss clicks and sit there on the game's own

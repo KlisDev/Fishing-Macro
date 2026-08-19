@@ -292,6 +292,14 @@ class Detection:
     # most scenery on its own; this gate is the backstop for the grey-dock
     # scenes that slip past it.
     bar_track_min_frac: float = 0.25
+    # A reel that ends with the progress strip below this was a fish getting
+    # away, not a catch. Progress starts at 0.50 and climbs to 1.0 over a clean
+    # fight, falling back while the fish is outside the zone, so a bar that
+    # vanishes down here vanished because the fight was lost. Counting those as
+    # catches made the stats claim fish that were never landed and hid how
+    # often the zone was losing them.
+    catch_progress_min: float = 0.35
+
     # Before calling a catch finished, confirm the progress strip is really
     # gone. It must span at least this fraction of the track to count as still
     # drawn. Losing the zone alone means nothing — a chest sitting on a small
@@ -392,6 +400,10 @@ class Chest:
     enabled: bool = True
     # Hold the zone on the chest this long. The mechanic needs 1.5-2 s; 2.5 s
     # is the margin the user asked for.
+    # Extra time allowed to *travel* to the chest before giving up on it. The
+    # hold below is time spent on the tile; this is the flight out to it, which
+    # at ~2 track/s^2 is up to about a second for a chest across the track.
+    travel_grace: float = 1.5
     hold: float = 2.5
     # Ignore specks: the tile is ~8.7 % of the track, same as the fish.
     min_width_frac: float = 0.035
