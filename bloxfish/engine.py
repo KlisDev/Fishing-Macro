@@ -551,7 +551,14 @@ class FishingEngine:
             # here, the detector is latched onto something that is not a live
             # bar; abandon it so the outer loop recasts.
             if now - t0 > t.max_reel_seconds:
+                # A real minigame is 5-6 s, so hitting this ceiling means the
+                # reel loop was latched onto something that is not a live bar
+                # for the whole 12 s -- the "forgets it is fishing" symptom. It
+                # has no diag hook (unlike "bar never appeared"), so the pixels
+                # it was stuck on were never captured. Grab them now: what sits
+                # at the locked strip/prog is the whole answer.
                 timed_out = True
+                self._dump_diag("stuck_reel")
                 break
 
             frame = self.screen.grab(geo.full or geo.strip)

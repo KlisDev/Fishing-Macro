@@ -94,6 +94,15 @@ class ReelController:
         self.v_zone = VelocityEstimator(control.vel_window)
         self.v_fish = VelocityEstimator(control.vel_window)
         self._accel = physics.accel
+        # Recent |dv/dt| observations. The plant acceleration is a constant for
+        # a given rod, so the right estimator is a robust one: a single noisy
+        # frame double-differentiates into a huge spurious accel, and an
+        # exponential blend lets those spikes ratchet the estimate upward. On
+        # one 4K/60 Hz machine the live estimate climbed to 3.5 against a true
+        # ~2.0, which under-sizes the braking term in the switching curve and
+        # makes the zone overshoot and visibly hunt. A median over a short
+        # window ignores the spikes and tracks the true constant.
+        self._acc_obs: deque[float] = deque(maxlen=control.vel_window * 3)
         self._last_hold = False
         self._last_t: float | None = None
         self._last_vz: float | None = None
@@ -119,8 +128,12 @@ class ReelController:
             if np.sign(observed) == expected_sign and abs(vz) < self.p.v_max * 0.85:
                 mag = abs(observed)
                 if 0.2 < mag < 12.0:
-                    r = self.p.accel_adapt_rate
-                    self._accel = (1 - r) * self._accel + r * mag
+                    self._acc_obs.append(mag)
+                    # Median only once there are enough samples to be stable;
+                    # until then the reference default stands, so the first
+                    # second of a fight is never driven by one noisy reading.
+                    if len(self._acc_obs) >= self.c.vel_window:
+                        self._accel = float(np.median(self._acc_obs))
         self._last_t, self._last_vz = t, vz
 
     @property
@@ -140,6 +153,7 @@ class ReelController:
         self.v_zone.reset()
         self.v_fish.reset()
         self._accel = self.p.accel
+        self._acc_obs.clear()
         self._last_t = self._last_vz = None
         self._last_hold = False
 

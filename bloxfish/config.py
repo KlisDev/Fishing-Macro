@@ -278,12 +278,20 @@ class Detection:
     # fight, spent drifting, which looks exactly like the bot giving up
     # mid-catch.
     #
-    # Lowering it costs nothing measurable: across those same recordings the
-    # gate rejected 0 of 713 after-the-fact frames at ANY threshold down to
-    # 0.0, because read_bar's zone-column test already rejects them. 0.12 sits
-    # below the worst observed live value (0.29) and far above a strip showing
-    # sky or water (0.001).
-    bar_track_min_frac: float = 0.12
+    # There are two failure modes and they pull opposite ways. Too high and a
+    # real fight whose bar is bleeding daylight through it reads as gone
+    # mid-catch (that was 0.35, which lost tester A's bright-effect frames at
+    # 0.29). Too low and post-catch scenery that happens to be track-grey keeps
+    # the reel alive for the full 12 s ceiling -- the author's "it forgot it
+    # was fishing", which 0.12 reintroduced and 0.35 never had.
+    #
+    # The vision suite's lowest live-frame coverage across every recording is
+    # 0.293, so anything below that keeps all real fights steering; 0.25 leaves
+    # a margin while restoring most of the scenery rejection 0.12 gave away.
+    # The zone-column test in read_bar is the other half of this and rejects
+    # most scenery on its own; this gate is the backstop for the grey-dock
+    # scenes that slip past it.
+    bar_track_min_frac: float = 0.25
     # Before calling a catch finished, confirm the progress strip is really
     # gone. It must span at least this fraction of the track to count as still
     # drawn. Losing the zone alone means nothing — a chest sitting on a small
@@ -447,6 +455,13 @@ class Shop:
     dialog_timeout: float = 6.0
     craft_timeout: float = 6.0
     close_timeout: float = 4.0
+    # Getting out of the bait page needs two clicks on the bottom entry: 'Back'
+    # (main menu) then 'Nevermind' (closed). 'Back' does NOT close the dialogue,
+    # so waiting close_timeout after it -- as the exit used to -- burned ~4 s
+    # doing nothing before the second click. This is the short beat between the
+    # two: long enough for the next page to render, short enough not to pay for
+    # a close that Back was never going to do.
+    after_back: float = 0.5
 
     # Waits, in seconds (measured: menu swaps ~0.5 s).
     after_click: float = 0.6

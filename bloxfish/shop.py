@@ -393,12 +393,19 @@ def leave_dialogue(engine, tries: int = 3) -> bool:
     way: stepping forward repeatedly would march the character into the water.
     """
     cfg = engine.cfg.shop
-    for _ in range(max(1, tries)):
+    for k in range(max(1, tries)):
         if not engine._alive() or not in_dialogue(engine):
             return True
         x, y = _abs(engine.window, cfg.menu_last)
         engine.mouse.click_at(x, y)
-        if _wait_until(engine, lambda: not in_dialogue(engine), cfg.close_timeout):
+        # 'Back' only advances to the main menu; it does not close anything, so
+        # allow just a short beat and click again ('Nevermind') rather than
+        # sitting out close_timeout waiting for a close that will not come. A
+        # real close IS caught here -- _wait_until returns the instant the
+        # dialogue is gone -- so Nevermind still exits promptly. The last
+        # attempt gets the full close_timeout as a safety net under lag.
+        budget = cfg.close_timeout if k == max(1, tries) - 1 else cfg.after_back
+        if _wait_until(engine, lambda: not in_dialogue(engine), budget):
             return True
 
     for _ in range(2):
