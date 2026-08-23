@@ -250,11 +250,21 @@ COLOUR_ITEMS = [
     ("progress", "Progress bar fill",
      "The bright green fill of the thin bar just under the reel bar. Click the "
      "lit green part while a fish is on."),
+    ("zone", "Zone — green (in)",
+     "The green player zone. Click the GREEN part (when the fish is inside it). "
+     "You only capture the green — the grey 'fish escaping' state is handled "
+     "automatically, so don't worry about catching it. This only ADDS your "
+     "green, it never removes the adaptive handling."),
+    ("fish", "Fish tile",
+     "The teal / blue square the fish sprite sits on. Click the tile. Like the "
+     "zone, this is added to the adaptive fish detection, not a replacement."),
 ]
 COLOUR_MASK = {
     "track": vision.track_mask,
     "chest": vision.chest_mask,
     "progress": vision.progress_mask,   # (img, c) — same call shape
+    "zone": vision.zone_mask_tracking,  # tracker, not the strict locator
+    "fish": vision.fish_mask,
 }
 COLOUR_ACCENT = "#e879f9"
 
@@ -650,10 +660,15 @@ class Calibrator(ctk.CTkToplevel):
         desc = next((d for k, _, d in COLOUR_ITEMS if k == key), "")
         self.d_title.configure(text=f"🎨  {label}", text_color=COLOUR_ACCENT)
         self.d_text.configure(text=desc, text_color="#d7dade")
+        # Reference PNG placeholder, same slot the box/dot items use: drop
+        # assets/gui/calib/<key>.png (track/chest/progress/zone/fish) to show
+        # one; absent is fine — _calib_image returns None and we blank it.
+        img = _calib_image(key) or _blank_image()
         try:
-            self.d_img.configure(image=_blank_image(), text="")
+            self.d_img.configure(image=img, text="")
         except Exception:                          # noqa: BLE001
             pass
+        self.d_img.image = img
         self.hint.configure(
             text="Click the element on the screenshot to sample its colour. "
                  "Magenta shows everywhere the bot would then match it.")

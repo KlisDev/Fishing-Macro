@@ -85,7 +85,14 @@ def zone_mask_tracking(img: np.ndarray, c: Colors) -> np.ndarray:
                 & (g > c.zone_g_min))
     greyed = ((np.abs(g - b) <= c.zone_neutral_tol)
               & (g >= c.zone_g_min) & (g <= c.zone_neutral_g_max))
-    return neutral & (greenish | greyed)
+    branches = greenish | greyed
+    if c.cap_zone_on:
+        # A per-machine capture of the NORMAL green zone (Calibrate -> Advanced).
+        # Unioned, never replacing: the grey-alarm branch stays, so a capture
+        # that misses the desaturated state can't lose the zone mid-fight. Kept
+        # inside the neutral gate so a mistaken blue/red capture is rejected.
+        branches = branches | _near(img, c.cap_zone_bgr, c.cap_zone_tol)
+    return neutral & branches
 
 
 def track_mask(img: np.ndarray, c: Colors) -> np.ndarray:
@@ -109,8 +116,13 @@ def track_mask(img: np.ndarray, c: Colors) -> np.ndarray:
 def fish_mask(img: np.ndarray, c: Colors) -> np.ndarray:
     """Fish tile, teal or alarm-blue, including the sprite drawn on it."""
     b, g, r = _split(img)
-    return ((b > c.fish_b_min) & (b > r + c.fish_b_over_r)
-            & (g > r + c.fish_g_over_r))
+    m = ((b > c.fish_b_min) & (b > r + c.fish_b_over_r)
+         & (g > r + c.fish_g_over_r))
+    if c.cap_fish_on:
+        # Per-machine capture of the fish tile, unioned so both the teal and the
+        # alarm-blue states stay covered by the relational test above.
+        m = m | _near(img, c.cap_fish_bgr, c.cap_fish_tol)
+    return m
 
 
 def chest_mask(img: np.ndarray, c: Colors) -> np.ndarray:

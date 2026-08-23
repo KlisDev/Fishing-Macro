@@ -148,10 +148,15 @@ the list lets you pin the detector to *your* screen's exact colours:
 4. **Save.**
 
 It's entirely optional and off until you capture something — leave it alone and
-detection works exactly as before. **Reset to default** undoes a capture. Only
-the stable-coloured elements are here on purpose; the moving fish and the zone
-(which changes colour mid-fight) stay on the adaptive logic that already handles
-them.
+detection works exactly as before. **Reset to default** undoes a capture.
+
+The **zone** and **fish** are here too, but treated differently: because they
+change colour mid-fight (the zone greys out when the fish escapes), capturing
+them only **adds** your colour on top of the built-in adaptive detection — it
+never replaces it, so it can't make the bot lose the fish mid-catch. You capture
+only the normal green zone / the fish tile; the grey and flash states stay
+automatic. (Drop reference pictures into `assets/gui/calib/` — `track.png`,
+`chest.png`, `progress.png`, `zone.png`, `fish.png` — to illustrate each one.)
 
 **Re-shoot** retakes the screenshot (open the relevant dialogue in game first,
 so you can line things up against the real UI). **Save** writes to `config.json`.

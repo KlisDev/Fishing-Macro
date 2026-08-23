@@ -16,7 +16,7 @@ CONFIG_PATH = ROOT / "config.json"
 
 # Printed at startup. Bump this on every release: the fastest way to waste an
 # afternoon is debugging a bug report from a build that already has the fix.
-VERSION = "1.3.0"
+VERSION = "1.3.1"
 
 
 @dataclass
@@ -92,16 +92,23 @@ class Colors:
     # mid-fight animations and travel between machines. But the *anchors* were
     # measured on one screen, and a different GPU/settings renders them a little
     # differently (measured: a tester's track was (24,32,32) where the author's
-    # is (34,34,34)). These let a user pin the anchor to THEIR screen for the
-    # stable-coloured elements only -- never the zone or fish, which change
-    # colour during the fight and must stay relational.
+    # is (34,34,34)). These let a user pin the anchor to THEIR screen.
+    #
+    # Two behaviours by element:
+    #   * Stable-coloured (track, chest, progress): the capture REPLACES the
+    #     relational mask -- a single colour +/- tol is enough for something that
+    #     does not change colour.
+    #   * Zone and fish, which DO change colour mid-fight: the capture is UNIONED
+    #     with the relational mask (see vision.zone_mask_tracking / fish_mask),
+    #     so it can only ADD the captured colour and never removes the green-OR-
+    #     grey / teal-OR-blue handling. The catastrophic mid-fight loss therefore
+    #     stays impossible even from a bad capture.
     #
     # Each is OPT-IN: `cap_<elem>_on` defaults False, so an un-captured install
     # detects exactly as before and still tracks code updates (no frozen-config
-    # trap). When True, the element's mask matches pixels within `cap_<elem>_tol`
-    # per channel of the captured `cap_<elem>_bgr` (stored BGR, the detector's
-    # space). Reset just flips `_on` back to False. Named `cap_*` so they never
-    # collide with the relational anchors above (`track`, `track_tol`, ...).
+    # trap). `cap_<elem>_bgr` is stored BGR (the detector's space), matched
+    # within `cap_<elem>_tol` per channel. Reset flips `_on` back to False. Named
+    # `cap_*` so they never collide with the relational anchors above.
     cap_track_on: bool = False
     cap_track_bgr: tuple = (34, 34, 34)
     cap_track_tol: int = 16
@@ -111,6 +118,18 @@ class Colors:
     cap_progress_on: bool = False
     cap_progress_bgr: tuple = (52, 210, 90)
     cap_progress_tol: int = 55
+    # Zone and fish change colour mid-fight, so their capture is UNIONED with
+    # the relational mask (adds the captured colour, never removes the
+    # green-OR-grey / teal-OR-blue handling) -- it can only broaden, so the
+    # catastrophic mid-fight zone loss stays impossible. You capture the normal
+    # green zone / teal fish tile; the grey-alarm and blue-flash states stay on
+    # the adaptive logic automatically.
+    cap_zone_on: bool = False
+    cap_zone_bgr: tuple = (16, 150, 21)
+    cap_zone_tol: int = 40
+    cap_fish_on: bool = False
+    cap_fish_bgr: tuple = (133, 153, 16)
+    cap_fish_tol: int = 40
 
 
 @dataclass
@@ -603,7 +622,7 @@ class Config:
         # calibration like the boxes, not tuning constants, so they persist;
         # the `_on` flags default False so an install that never captured keeps
         # tracking code updates.
-        for elem in ("track", "chest", "progress"):
+        for elem in ("track", "chest", "progress", "zone", "fish"):
             fields |= {f"colors.cap_{elem}_on", f"colors.cap_{elem}_bgr",
                        f"colors.cap_{elem}_tol"}
         return fields
