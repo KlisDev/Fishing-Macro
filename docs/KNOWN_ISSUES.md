@@ -15,6 +15,30 @@ Everything here was seen in a real recording, not guessed.
 
 ---
 
+## 0. The bar tracks the fish, then slides to one side and gives up
+
+**This is the single most common report, and it is almost always one thing:
+the macro is not running as administrator.**
+
+If Roblox is running elevated (as admin) and the macro is not, Windows
+**silently discards every click and keypress the macro sends** — a security
+rule called UIPI. The macro's detection and control are working perfectly; its
+input just never arrives. The fishing zone gets no steering, drifts to whichever
+edge the game pulls it toward, and the fish escapes. The **same rule** is why
+**`F2`/`F4` do nothing** for some people — the global hotkey is blocked too.
+
+**Fix:** run the macro as administrator. Double-click **`Run as Admin.bat`** and
+say Yes to the popup, or right-click your terminal → *Run as administrator* and
+run `python easy_run.py`.
+
+There is also a rarer, intermittent version of the same symptom — the zone jams
+against a wall for one reel out of several even when input generally works,
+because a single mouse event was dropped in transit. The macro now re-asserts
+the button a few times a second so a dropped event heals within ~0.15 s instead
+of costing the whole fight (v1.2.1+). Make sure you are on the latest build.
+
+---
+
 ## 1. False bites, or missed bites (the bite `!` detector)
 
 The bot watches a box above your character for the pink **`!`** that pops up

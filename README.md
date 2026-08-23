@@ -46,14 +46,20 @@ Same bot, same questions, no window.
 The bot clicks at fixed places on screen, so a few things have to be true or the
 clicks land on nothing. The app shows this list too.
 
-1. **Stand at the NPC**, right on the edge of interaction range — the
+1. **Run the macro as administrator.** This is the big one. If Roblox is
+   running as admin and the macro is not, Windows silently drops every click
+   and keypress it sends — the fishing bar drifts to one side and never
+   catches, and `F2`/`F4` do nothing. Easiest way: double-click
+   **`Run as Admin.bat`** (say Yes to the popup). Or right-click your terminal
+   → *Run as administrator*, then `python easy_run.py`.
+2. **Stand at the NPC**, right on the edge of interaction range — the
    `Interact` prompt should be showing.
-2. **Turn OFF auto-run / running.**
-3. **Turn OFF shift lock** — the bot switches it on itself and tracks the state.
-4. **Leave Roblox focused** and don't touch the mouse while it runs.
-5. **Don't let another window overlap the game.** The bot reads the screen; a
+3. **Turn OFF auto-run / running.**
+4. **Turn OFF shift lock** — the bot switches it on itself and tracks the state.
+5. **Leave Roblox focused** and don't touch the mouse while it runs.
+6. **Don't let another window overlap the game.** The bot reads the screen; a
    covered panel reads as "not there".
-6. **Equip your fishing rod** and tell the app which hotbar slot it is in. The
+7. **Equip your fishing rod** and tell the app which hotbar slot it is in. The
    bot stows and re-draws the rod around each bait trip — that is what clears a
    known game bug where the character freezes after a catch.
 
@@ -156,11 +162,12 @@ Set in the app, or in `config.json` afterwards.
 
 | Symptom | Likely cause |
 |---|---|
+| **Bar tracks the fish then drifts to one side and gives up; F2/F4 dead** | **Not running as administrator.** Roblox is elevated and the macro isn't, so Windows drops its input. Run **`Run as Admin.bat`**. This is the #1 cause of "it gives up on the fish". |
 | `NPC dialogue never opened` | Out of interaction range, or the menu box needs calibrating. |
 | `CRAFT window never opened` | The craft-button area is mis-calibrated, or another window overlaps it. |
 | Bot bites at nothing | The bite area reaches the player list in the top-right — shrink it, or remove red/pink cosmetics. |
 | Clicks land in the wrong place | Calibrate. The shipped positions assume a particular window size. |
-| Hotkeys do nothing | Run as administrator, or use the buttons. |
+| Hotkeys do nothing | Run as administrator (`Run as Admin.bat`), or use the on-screen buttons. |
 | Nothing works after editing `config.json` | Delete it — the defaults come back. |
 | `ModuleNotFoundError: No module named 'numpy'` | The libraries aren't installed. Both entry points install them automatically now, so make sure you're on the latest version. Otherwise run `pip install -r requirements.txt` yourself. |
 | pip installs, but packages are still missing | Your Python is probably too new for prebuilt downloads to exist yet. Python 3.12 is the safest choice. |
