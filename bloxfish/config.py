@@ -16,7 +16,7 @@ CONFIG_PATH = ROOT / "config.json"
 
 # Printed at startup. Bump this on every release: the fastest way to waste an
 # afternoon is debugging a bug report from a build that already has the fix.
-VERSION = "1.2.1"
+VERSION = "1.3.0"
 
 
 @dataclass
@@ -86,6 +86,31 @@ class Colors:
     # positives, and it recovers the washed-out daytime marker.
     bite_sat_min: int = 45
     bite_val_min: int = 110
+
+    # --- per-machine colour capture (Calibrate -> Advanced) ---------------
+    # The predicates above are relational on purpose, so they survive the
+    # mid-fight animations and travel between machines. But the *anchors* were
+    # measured on one screen, and a different GPU/settings renders them a little
+    # differently (measured: a tester's track was (24,32,32) where the author's
+    # is (34,34,34)). These let a user pin the anchor to THEIR screen for the
+    # stable-coloured elements only -- never the zone or fish, which change
+    # colour during the fight and must stay relational.
+    #
+    # Each is OPT-IN: `cap_<elem>_on` defaults False, so an un-captured install
+    # detects exactly as before and still tracks code updates (no frozen-config
+    # trap). When True, the element's mask matches pixels within `cap_<elem>_tol`
+    # per channel of the captured `cap_<elem>_bgr` (stored BGR, the detector's
+    # space). Reset just flips `_on` back to False. Named `cap_*` so they never
+    # collide with the relational anchors above (`track`, `track_tol`, ...).
+    cap_track_on: bool = False
+    cap_track_bgr: tuple = (34, 34, 34)
+    cap_track_tol: int = 16
+    cap_chest_on: bool = False
+    cap_chest_bgr: tuple = (40, 170, 210)
+    cap_chest_tol: int = 45
+    cap_progress_on: bool = False
+    cap_progress_bgr: tuple = (52, 210, 90)
+    cap_progress_tol: int = 55
 
 
 @dataclass
@@ -574,6 +599,13 @@ class Config:
                                          "craft_plus", "craft_button", "craft_close")}
         fields |= {"sell.enabled", "sell.every", "chest.enabled",
                    "timing.slow_rod_flick", "timing.fast_bite"}
+        # Per-machine colour capture (Calibrate -> Advanced). These are user
+        # calibration like the boxes, not tuning constants, so they persist;
+        # the `_on` flags default False so an install that never captured keeps
+        # tracking code updates.
+        for elem in ("track", "chest", "progress"):
+            fields |= {f"colors.cap_{elem}_on", f"colors.cap_{elem}_bgr",
+                       f"colors.cap_{elem}_tol"}
         return fields
 
     @staticmethod

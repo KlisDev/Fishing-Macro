@@ -689,7 +689,7 @@ class FishingEngine:
             # free. The chest logic needs it to decide whether a detour is
             # affordable.
             pimg = geo.slice_prog(frame)
-            p = read_progress(pimg) if pimg is not None else None
+            p = read_progress(pimg, self.cfg.colors) if pimg is not None else None
             if p is not None:
                 progress = p
                 if self.cfg.debug and (last_progress is None

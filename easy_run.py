@@ -74,6 +74,12 @@ except ImportError:                                # noqa: BLE001
 
 from bloxfish.config import Config                 # noqa: E402
 from bloxfish.engine import FishingEngine          # noqa: E402
+from bloxfish import vision                        # noqa: E402
+
+try:
+    import numpy as np
+except ImportError:                                # noqa: BLE001
+    np = None
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("dark-blue")
@@ -228,6 +234,31 @@ def _group_of(key: str):
     return None, None, None, None
 
 
+# Advanced colour capture (Calibrate -> Advanced). Each key maps to the
+# cfg.colors.cap_<key>_{on,bgr,tol} fields and to the mask below. Only the
+# stable-coloured elements are here -- the zone and fish change colour during a
+# fight and stay on their relational masks, so they are deliberately absent.
+COLOUR_ITEMS = [
+    ("track", "Reel bar background",
+     "The dark grey track behind the fish. Click the empty dark part of the "
+     "reel bar. This pins bar detection to your screen's exact grey — the thing "
+     "that renders differently on different GPUs."),
+    ("chest", "Treasure chest tile",
+     "The gold / amber square a chest sits on. Click the tile right behind a "
+     "chest. Chest colours were never tuned per machine, so this is the one "
+     "that helps most."),
+    ("progress", "Progress bar fill",
+     "The bright green fill of the thin bar just under the reel bar. Click the "
+     "lit green part while a fish is on."),
+]
+COLOUR_MASK = {
+    "track": vision.track_mask,
+    "chest": vision.chest_mask,
+    "progress": vision.progress_mask,   # (img, c) — same call shape
+}
+COLOUR_ACCENT = "#e879f9"
+
+
 _BLANK_IMG = None
 
 
@@ -280,6 +311,7 @@ class Calibrator(ctk.CTkToplevel):
         self.geometry("1280x820")
         self.master_app = master
         self.sel: str | None = None
+        self.pick: str | None = None      # active Advanced-colour element, if any
         self.drag: tuple | None = None
         self.shapes: dict[str, dict] = {}
         self.scale = 1.0
@@ -320,6 +352,26 @@ class Calibrator(ctk.CTkToplevel):
                                "⦿  point the bot clicks\n",
                      anchor="w", justify="left", text_color=MUTED,
                      font=ctk.CTkFont(size=11)).pack(fill="x", padx=6, pady=(16, 4))
+
+        # ---- Advanced: per-machine colour capture -----------------------
+        self.colour_buttons: dict[str, ctk.CTkButton] = {}
+        hdr = ctk.CTkFrame(left, fg_color="transparent")
+        hdr.pack(fill="x", pady=(14, 4), padx=2)
+        ctk.CTkLabel(hdr, text="🎨  Advanced — colours", anchor="w",
+                     font=ctk.CTkFont(size=13, weight="bold"),
+                     text_color=COLOUR_ACCENT).pack(side="left")
+        for key, label, _desc in COLOUR_ITEMS:
+            row = ctk.CTkButton(
+                left, text=f"   🎨   {label}", anchor="w", height=34,
+                fg_color="transparent", hover_color="#2b3036",
+                text_color="#d7dade", font=ctk.CTkFont(size=12),
+                command=lambda k=key: self.select_colour(k))
+            row.pack(fill="x", padx=2, pady=1)
+            self.colour_buttons[key] = row
+        ctk.CTkLabel(left, text="\nOptional. Pin the bot to your screen's exact\n"
+                               "colours. Off until you capture one.\n",
+                     anchor="w", justify="left", text_color=MUTED,
+                     font=ctk.CTkFont(size=11)).pack(fill="x", padx=6, pady=(4, 4))
 
         # ---- right: canvas + details ------------------------------------
         right = ctk.CTkFrame(outer, fg_color="transparent")
@@ -364,6 +416,32 @@ class Calibrator(ctk.CTkToplevel):
         self.d_text.grid(row=1, column=0, sticky="ew", padx=16, pady=(4, 12))
         self.d_img = ctk.CTkLabel(det, text="")
         self.d_img.grid(row=0, column=1, rowspan=2, padx=16, pady=12)
+
+        # Colour-capture controls: shown only while an Advanced-colour item is
+        # picked. Grid-removed by default so the normal box/dot flow is unchanged.
+        self.colour_frame = ctk.CTkFrame(det, fg_color="transparent")
+        self.colour_frame.grid(row=2, column=0, columnspan=2, sticky="ew",
+                               padx=16, pady=(0, 12))
+        self.colour_frame.grid_columnconfigure(1, weight=1)
+        self.colour_frame.grid_remove()
+        self.swatch = ctk.CTkLabel(self.colour_frame, text="", width=54,
+                                   height=26, corner_radius=6, fg_color="#000000")
+        self.swatch.grid(row=0, column=0, padx=(0, 10))
+        self.swatch_txt = ctk.CTkLabel(self.colour_frame, text="", anchor="w",
+                                       text_color=MUTED)
+        self.swatch_txt.grid(row=0, column=1, columnspan=2, sticky="w")
+        ctk.CTkLabel(self.colour_frame, text="Tolerance", anchor="w").grid(
+            row=1, column=0, sticky="w", pady=(10, 0))
+        self.tol_slider = ctk.CTkSlider(self.colour_frame, from_=4, to=90,
+                                        number_of_steps=86, command=self._on_tol)
+        self.tol_slider.grid(row=1, column=1, sticky="ew", pady=(10, 0), padx=8)
+        self.tol_val = ctk.CTkLabel(self.colour_frame, text="", width=30)
+        self.tol_val.grid(row=1, column=2, pady=(10, 0))
+        ctk.CTkButton(self.colour_frame, text="Reset to default", width=140,
+                      fg_color="#3a3f45", hover_color="#4a5057",
+                      command=self._reset_colour).grid(row=2, column=1,
+                                                       sticky="w", pady=(10, 0),
+                                                       padx=8)
 
         self.after(250, self.shoot)
 
@@ -481,8 +559,16 @@ class Calibrator(ctk.CTkToplevel):
     def redraw(self) -> None:
         self.canvas.delete("all")
         self.shapes.clear()
-        if getattr(self, "_tk_img", None) is not None:
-            self.canvas.create_image(0, 0, anchor="nw", image=self._tk_img)
+        # While an Advanced colour is picked and captured, show the screenshot
+        # with everything the bot would match tinted magenta — the live "what
+        # the detector sees" preview. Otherwise the plain screenshot.
+        base = getattr(self, "_tk_img", None)
+        if self.pick and getattr(self.cfg.colors, f"cap_{self.pick}_on", False):
+            prev = self._preview_tk()
+            if prev is not None:
+                base = prev
+        if base is not None:
+            self.canvas.create_image(0, 0, anchor="nw", image=base)
         if self.win is None:                       # no screenshot yet
             return
 
@@ -528,6 +614,10 @@ class Calibrator(ctk.CTkToplevel):
         """Make `key` the editable item. Must never raise: if this dies, the
         list stops responding and the tool looks frozen."""
         self.sel = key
+        self.pick = None                       # leave colour-pick mode
+        self.colour_frame.grid_remove()
+        for b in self.colour_buttons.values():
+            b.configure(fg_color="transparent")
         title, icon, colour, spec = _group_of(key)
         for k, b in self.buttons.items():
             b.configure(fg_color=colour if k == key else "transparent")
@@ -547,8 +637,109 @@ class Calibrator(ctk.CTkToplevel):
                 else "Drag the dot onto the button")
         self.redraw()
 
+    # -- Advanced: per-machine colour capture ------------------------------
+    def select_colour(self, key: str) -> None:
+        """Enter eyedropper mode for the colour element `key`."""
+        self.sel = None                        # turn off box/dot editing
+        self.pick = key
+        for b in self.buttons.values():
+            b.configure(fg_color="transparent")
+        for k, b in self.colour_buttons.items():
+            b.configure(fg_color=COLOUR_ACCENT if k == key else "transparent")
+        label = next((l for k, l, _ in COLOUR_ITEMS if k == key), key)
+        desc = next((d for k, _, d in COLOUR_ITEMS if k == key), "")
+        self.d_title.configure(text=f"🎨  {label}", text_color=COLOUR_ACCENT)
+        self.d_text.configure(text=desc, text_color="#d7dade")
+        try:
+            self.d_img.configure(image=_blank_image(), text="")
+        except Exception:                          # noqa: BLE001
+            pass
+        self.hint.configure(
+            text="Click the element on the screenshot to sample its colour. "
+                 "Magenta shows everywhere the bot would then match it.")
+        self.colour_frame.grid()
+        self._refresh_colour_ui()
+        self.redraw()
+
+    def _sample_colour(self, ev) -> None:
+        """Read the colour under the click and store it for the picked element."""
+        if np is None or self._shot is None or not self.pick or self.scale <= 0:
+            return
+        arr = np.asarray(self._shot)               # RGB, H x W x 3
+        h, w = arr.shape[:2]
+        gx = int(ev.x / self.scale)
+        gy = int(ev.y / self.scale)
+        gx = max(2, min(w - 3, gx))
+        gy = max(2, min(h - 3, gy))
+        patch = arr[gy - 2:gy + 3, gx - 2:gx + 3].reshape(-1, 3)
+        rgb = np.median(patch, axis=0)             # median rejects an edge pixel
+        bgr = (int(rgb[2]), int(rgb[1]), int(rgb[0]))    # detectors work in BGR
+        setattr(self.cfg.colors, f"cap_{self.pick}_bgr", bgr)
+        setattr(self.cfg.colors, f"cap_{self.pick}_on", True)
+        self._refresh_colour_ui()
+        self.redraw()
+
+    def _on_tol(self, v) -> None:
+        if not self.pick:
+            return
+        setattr(self.cfg.colors, f"cap_{self.pick}_tol", int(float(v)))
+        self.tol_val.configure(text=str(int(float(v))))
+        self.redraw()
+
+    def _reset_colour(self) -> None:
+        if not self.pick:
+            return
+        setattr(self.cfg.colors, f"cap_{self.pick}_on", False)
+        self._refresh_colour_ui()
+        self.hint.configure(text="Reset — back to the built-in colour. Click the "
+                                 "element to capture your own again.")
+        self.redraw()
+
+    def _refresh_colour_ui(self) -> None:
+        """Sync the swatch, tolerance slider and caption to the stored values."""
+        if not self.pick:
+            return
+        c = self.cfg.colors
+        on = getattr(c, f"cap_{self.pick}_on", False)
+        bgr = getattr(c, f"cap_{self.pick}_bgr", (0, 0, 0))
+        tol = getattr(c, f"cap_{self.pick}_tol", 16)
+        hexc = "#%02x%02x%02x" % (int(bgr[2]), int(bgr[1]), int(bgr[0]))  # ->RGB
+        if on:
+            self.swatch.configure(fg_color=hexc)
+            self.swatch_txt.configure(
+                text=f"captured {hexc}   (BGR {tuple(int(x) for x in bgr)})   "
+                     f"— active", text_color="#d7dade")
+        else:
+            self.swatch.configure(fg_color="#000000")
+            self.swatch_txt.configure(
+                text="using the built-in colour — click the element to capture "
+                     "your own", text_color=MUTED)
+        self.tol_slider.set(tol)
+        self.tol_val.configure(text=str(int(tol)))
+
+    def _preview_tk(self):
+        """Screenshot with the picked element's matched pixels tinted magenta."""
+        if np is None or self._shot is None or self.pick not in COLOUR_MASK:
+            return None
+        try:
+            rgb = np.asarray(self._shot).copy()          # RGB
+            mask = COLOUR_MASK[self.pick](rgb[:, :, ::-1], self.cfg.colors)
+            tint = np.array([236, 72, 249], np.uint8)    # COLOUR_ACCENT in RGB
+            rgb[mask] = (rgb[mask] // 2 + tint // 2)      # blend so shape shows
+            prev = Image.fromarray(rgb)
+            size = (max(1, int(prev.width * self.scale)),
+                    max(1, int(prev.height * self.scale)))
+            self._prev_ctk = ctk.CTkImage(light_image=prev, dark_image=prev,
+                                          size=size)
+            return self._prev_ctk._get_scaled_light_photo_image(size)
+        except Exception:                              # noqa: BLE001
+            return None
+
     # -- dragging (selected item only) -------------------------------------
     def _down(self, ev) -> None:
+        if self.pick:                     # Advanced-colour eyedropper mode
+            self._sample_colour(ev)
+            return
         if not self.sel or self.sel not in self.shapes:
             return
         it = self.shapes[self.sel]

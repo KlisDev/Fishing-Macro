@@ -33,6 +33,20 @@ def _split(img: np.ndarray):
             img[:, :, 2].astype(np.int16))
 
 
+def _near(img: np.ndarray, ref, tol: int) -> np.ndarray:
+    """Pixels within `tol` of the captured BGR `ref` on every channel.
+
+    The opt-in per-machine colour override (Calibrate -> Advanced). Only ever
+    used for the stable-coloured elements -- the track background, the chest
+    tile, the progress fill -- never the zone or fish, which change colour
+    during a fight and stay on their relational masks.
+    """
+    b, g, r = _split(img)
+    return ((np.abs(b - int(ref[0])) <= tol)
+            & (np.abs(g - int(ref[1])) <= tol)
+            & (np.abs(r - int(ref[2])) <= tol))
+
+
 def zone_mask(img: np.ndarray, c: Colors) -> np.ndarray:
     """Green player zone — strict, green-dominant only.
 
@@ -84,6 +98,8 @@ def track_mask(img: np.ndarray, c: Colors) -> np.ndarray:
     8 below green, so every track pixel failed and coverage read 0.04 instead
     of 0.70. The bar was plainly there; the mask simply could not see it.
     """
+    if c.cap_track_on:
+        return _near(img, c.cap_track_bgr, c.cap_track_tol)
     b, g, r = _split(img)
     tol = c.track_neutral_tol
     return ((np.abs(b - c.track[0]) <= c.track_tol)
@@ -105,6 +121,8 @@ def chest_mask(img: np.ndarray, c: Colors) -> np.ndarray:
     track grey `(33,33,33)` — so a warm-dominant test separates it cleanly and
     cannot be confused with the fish.
     """
+    if c.cap_chest_on:
+        return _near(img, c.cap_chest_bgr, c.cap_chest_tol)
     b, g, r = _split(img)
     return ((r > c.chest_r_min) & (g > c.chest_g_min) & (b < c.chest_b_max)
             & (r > b + c.chest_r_over_b) & (g > b + c.chest_g_over_b))
@@ -125,8 +143,16 @@ def find_chest(strip: np.ndarray, colors: Colors,
     return float(xs.min()), float(xs.max())
 
 
-def progress_mask(img: np.ndarray) -> np.ndarray:
-    """Filled part of the thin progress bar: bright green (85,250,149)->(36,188,52)."""
+def progress_mask(img: np.ndarray, c: Colors | None = None) -> np.ndarray:
+    """Filled part of the thin progress bar: bright green (85,250,149)->(36,188,52).
+
+    `c` is optional so the many call sites that only ever see the default green
+    stay untouched; pass it to honour a per-machine capture of the fill colour.
+    The two-tone witness (`progress_track_mask`) is deliberately left on its
+    hardcoded numbers -- it is load-bearing and gets its own pass later.
+    """
+    if c is not None and c.cap_progress_on:
+        return _near(img, c.cap_progress_bgr, c.cap_progress_tol)
     b, g, r = _split(img)
     return (g > 150) & (b < 145) & (r < 185)
 
@@ -580,12 +606,12 @@ def read_bar(strip: np.ndarray, geo: BarGeometry, colors: Colors,
     )
 
 
-def read_progress(img: np.ndarray) -> float | None:
+def read_progress(img: np.ndarray, c: Colors | None = None) -> float | None:
     """Fraction 0..1 of the thin progress bar. `img` is a grab of geo.prog.
 
     Starts at 0.50 and reaches 1.0 after ~4.85 s of perfect tracking.
     """
-    cols = progress_mask(img).sum(axis=0)
+    cols = progress_mask(img, c).sum(axis=0)
     xs = np.flatnonzero(cols > img.shape[0] * 0.3)
     if len(xs) < 3:
         return None

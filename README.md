@@ -133,6 +133,26 @@ timing bug rather than a calibration one. Leave it as a wide central band. The
 log now prints the peak the meter reached against the threshold it needed, so
 you can tell "not in the box" (peak near zero) from "reading short".
 
+### Advanced — colours (optional)
+
+The bot recognises the reel bar, chests and so on by colour, and different
+graphics cards render those colours a little differently — occasionally enough
+to throw detection off. The **🎨 Advanced — colours** section at the bottom of
+the list lets you pin the detector to *your* screen's exact colours:
+
+1. With a fishing minigame on screen, pick an item (start with **Treasure chest
+   tile** — that's the one that helps most).
+2. **Click that element on the screenshot.** It samples the colour there.
+3. The screenshot tints **magenta** everywhere the bot would now match — check
+   it lights up the chest tile and little else. Nudge **Tolerance** if needed.
+4. **Save.**
+
+It's entirely optional and off until you capture something — leave it alone and
+detection works exactly as before. **Reset to default** undoes a capture. Only
+the stable-coloured elements are here on purpose; the moving fish and the zone
+(which changes colour mid-fight) stay on the adaptive logic that already handles
+them.
+
 **Re-shoot** retakes the screenshot (open the relevant dialogue in game first,
 so you can line things up against the real UI). **Save** writes to `config.json`.
 

@@ -88,7 +88,9 @@ latches onto the wrong thing and reels a phantom.
   is noticeably more reliable.**
 - **Your graphics card / settings render the bar's colours slightly
   differently** than the shipped defaults. (Measured: one machine's track is
-  `(24,32,32)` where another's is `(34,34,34)`.)
+  `(24,32,32)` where another's is `(34,34,34)`.) If this is you, **Calibrate →
+  🎨 Advanced — colours** lets you click the bar and the chest tile on a
+  screenshot to pin detection to your own screen's colours.
 - **Window size.** Roblox does not scale this UI evenly, so the bar can be
   anywhere from ~27% to ~97% of the window wide depending on your resolution.
 
