@@ -16,7 +16,7 @@ CONFIG_PATH = ROOT / "config.json"
 
 # Printed at startup. Bump this on every release: the fastest way to waste an
 # afternoon is debugging a bug report from a build that already has the fix.
-VERSION = "1.2.0"
+VERSION = "1.2.1"
 
 
 @dataclass

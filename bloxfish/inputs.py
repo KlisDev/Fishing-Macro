@@ -17,6 +17,7 @@ leaves the button up.
 from __future__ import annotations
 
 import ctypes
+import time
 from ctypes import wintypes
 
 MOUSEEVENTF_MOVE = 0x0001
@@ -124,19 +125,43 @@ class Keyboard:
 
 
 class Mouse:
+    # A held/released state is re-emitted at least this often, even when it has
+    # not changed. See `set`.
+    REASSERT_AFTER = 0.15
+
     def __init__(self) -> None:
         self._down = False
+        self._asserted = 0.0
 
     @property
     def is_down(self) -> bool:
         return self._down
 
     def set(self, down: bool) -> None:
-        """Idempotent: only emits an event when the state actually changes."""
-        if down == self._down:
-            return
-        _send(MOUSEEVENTF_LEFTDOWN if down else MOUSEEVENTF_LEFTUP)
-        self._down = down
+        """Drive the left button to `down`, re-asserting periodically.
+
+        A plain "only emit on change" guard assumes the game's button state
+        always matches ours. It does not: SendInput can be dropped -- under
+        load, or when focus flickers -- and a single lost LEFTUP/LEFTDOWN
+        desyncs us from the game permanently, because from then on every call
+        agrees with our stale `_down` and emits nothing. The reel minigame then
+        sees the button jammed and the zone pins against a wall for the whole
+        fight (measured: a lost LEFTUP left the zone stuck at the right edge for
+        5 s while the fish escaped and progress bled from 0.80 to 0.16).
+
+        So: emit on every change, and also re-emit the current state if it has
+        not been asserted in REASSERT_AFTER seconds. A dropped event now
+        self-heals within ~0.15 s instead of costing the whole reel, and
+        re-emitting a state the button is already in is a no-op in game. The
+        re-assert only fires during a *sustained* hold or release -- exactly the
+        moments the zone would otherwise sit jammed -- because the controller's
+        normal chatter changes the state far more often than every 0.15 s.
+        """
+        now = time.perf_counter()
+        if down != self._down or now - self._asserted >= self.REASSERT_AFTER:
+            _send(MOUSEEVENTF_LEFTDOWN if down else MOUSEEVENTF_LEFTUP)
+            self._down = down
+            self._asserted = now
 
     def press(self) -> None:
         self.set(True)
