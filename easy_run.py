@@ -251,20 +251,34 @@ COLOUR_ITEMS = [
      "The bright green fill of the thin bar just under the reel bar. Click the "
      "lit green part while a fish is on."),
     ("zone", "Zone — green (in)",
-     "The green player zone. Click the GREEN part (when the fish is inside it). "
-     "You only capture the green — the grey 'fish escaping' state is handled "
-     "automatically, so don't worry about catching it. This only ADDS your "
-     "green, it never removes the adaptive handling."),
-    ("fish", "Fish tile",
-     "The teal / blue square the fish sprite sits on. Click the tile. Like the "
-     "zone, this is added to the adaptive fish detection, not a replacement."),
+     "The player zone when the fish is INSIDE it (green). Click the green part. "
+     "Added to the adaptive detection, never a replacement."),
+    ("zone_out", "Zone — grey (out)",
+     "The SAME zone when the fish has escaped it (grey). Catch a frame where the "
+     "fish is outside the zone and click the grey bar. Optional — the grey state "
+     "is handled automatically too; capture it only if the auto handling misses "
+     "your screen's grey."),
+    ("fish", "Fish tile (in)",
+     "The square the fish sprite sits on while it is INSIDE the zone. Click the "
+     "tile background (not the fish itself). Added to the adaptive detection."),
+    ("fish_out", "Fish tile (out)",
+     "The SAME tile when the fish is OUTSIDE the zone — it renders a different "
+     "colour. Catch a frame with the fish outside and click its tile. This is "
+     "the one that fixes 'the bot loses the fish when it runs'."),
+    ("fish_tpl", "Fish image (template)",
+     "Colour-independent fallback: click the CENTRE of the fish, then size the "
+     "box with the slider so it frames the fish tile. The bot then finds the "
+     "fish by its PICTURE, so it works even when the tile colour is unusual. "
+     "Saves fish_template.png. Recapture it if you change your window size."),
 ]
 COLOUR_MASK = {
     "track": vision.track_mask,
     "chest": vision.chest_mask,
     "progress": vision.progress_mask,   # (img, c) — same call shape
     "zone": vision.zone_mask_tracking,  # tracker, not the strict locator
+    "zone_out": vision.zone_mask_tracking,
     "fish": vision.fish_mask,
+    "fish_out": vision.fish_mask,
 }
 COLOUR_ACCENT = "#e879f9"
 
@@ -322,6 +336,8 @@ class Calibrator(ctk.CTkToplevel):
         self.master_app = master
         self.sel: str | None = None
         self.pick: str | None = None      # active Advanced-colour element, if any
+        self._tpl_center: tuple | None = None    # fish-template crop centre (game px)
+        self._tpl_half = 34                       # crop half-size (game px)
         self.drag: tuple | None = None
         self.shapes: dict[str, dict] = {}
         self.scale = 1.0
@@ -619,6 +635,66 @@ class Calibrator(ctk.CTkToplevel):
                     self.shapes[key] = {"kind": "dot", "id": oid, "label": tid,
                                         "tick": tick, "r": r, "entry": entry}
 
+        if self.pick == "fish_tpl":
+            self._draw_template_overlay()
+
+    def _draw_template_overlay(self) -> None:
+        """Magenta = the crop box you're capturing; green = where the saved
+        template matches on this screenshot (the live 'does it find the fish')."""
+        if self._tpl_center is not None and self.scale > 0:
+            cx, cy = self._tpl_center
+            hx = self._tpl_half
+            x0 = (cx - hx) * self.scale
+            y0 = (cy - hx) * self.scale
+            x1 = (cx + hx) * self.scale
+            y1 = (cy + hx) * self.scale
+            self.canvas.create_rectangle(x0, y0, x1, y1,
+                                         outline=COLOUR_ACCENT, width=2)
+        # where does the saved template match right now?
+        if self.cfg.detection.fish_tpl_on and np is not None and self._shot:
+            try:
+                from bloxfish.config import CONFIG_PATH
+                import cv2
+                p = CONFIG_PATH.parent / "fish_template.png"
+                tpl = cv2.imread(str(p)) if p.exists() else None
+                if tpl is not None:
+                    shot_bgr = np.asarray(self._shot)[:, :, ::-1]
+                    m = vision.find_fish_template(shot_bgr, tpl,
+                                                  self.cfg.detection.fish_tpl_thr)
+                    if m is not None:
+                        res = cv2.matchTemplate(shot_bgr, tpl,
+                                                cv2.TM_CCOEFF_NORMED)
+                        _mn, _mx, _ml, ml = cv2.minMaxLoc(res)
+                        gx0, gy0 = ml[0] * self.scale, ml[1] * self.scale
+                        gx1 = (ml[0] + tpl.shape[1]) * self.scale
+                        gy1 = (ml[1] + tpl.shape[0]) * self.scale
+                        self.canvas.create_rectangle(gx0, gy0, gx1, gy1,
+                                                     outline="#22c55e", width=3)
+            except Exception:                          # noqa: BLE001
+                pass
+
+    def _save_template(self) -> None:
+        """Crop the screenshot around the picked centre and write it as the
+        fish template next to config.json."""
+        if np is None or self._shot is None or self._tpl_center is None:
+            return
+        try:
+            import cv2
+            from bloxfish.config import CONFIG_PATH
+            arr = np.asarray(self._shot)[:, :, ::-1]     # BGR
+            h, w = arr.shape[:2]
+            cx, cy = self._tpl_center
+            hx = self._tpl_half
+            x0, y0 = max(0, cx - hx), max(0, cy - hx)
+            x1, y1 = min(w, cx + hx), min(h, cy + hx)
+            crop = arr[y0:y1, x0:x1]
+            if crop.size == 0:
+                return
+            cv2.imwrite(str(CONFIG_PATH.parent / "fish_template.png"), crop)
+            self.cfg.detection.fish_tpl_on = True
+        except Exception:                              # noqa: BLE001
+            pass
+
     # -- selection --------------------------------------------------------
     def select(self, key: str) -> None:
         """Make `key` the editable item. Must never raise: if this dies, the
@@ -669,9 +745,14 @@ class Calibrator(ctk.CTkToplevel):
         except Exception:                          # noqa: BLE001
             pass
         self.d_img.image = img
-        self.hint.configure(
-            text="Click the element on the screenshot to sample its colour. "
-                 "Magenta shows everywhere the bot would then match it.")
+        if key == "fish_tpl":
+            self.hint.configure(
+                text="Click the CENTRE of the fish, then size the magenta box "
+                     "to frame it. Green box = where the saved template matches.")
+        else:
+            self.hint.configure(
+                text="Click the element on the screenshot to sample its colour. "
+                     "Magenta shows everywhere the bot would then match it.")
         self.colour_frame.grid()
         self._refresh_colour_ui()
         self.redraw()
@@ -684,6 +765,12 @@ class Calibrator(ctk.CTkToplevel):
         h, w = arr.shape[:2]
         gx = int(ev.x / self.scale)
         gy = int(ev.y / self.scale)
+        if self.pick == "fish_tpl":                # centre for the template crop
+            self._tpl_center = (max(0, min(w - 1, gx)), max(0, min(h - 1, gy)))
+            self._save_template()
+            self._refresh_colour_ui()
+            self.redraw()
+            return
         gx = max(2, min(w - 3, gx))
         gy = max(2, min(h - 3, gy))
         patch = arr[gy - 2:gy + 3, gx - 2:gx + 3].reshape(-1, 3)
@@ -697,12 +784,27 @@ class Calibrator(ctk.CTkToplevel):
     def _on_tol(self, v) -> None:
         if not self.pick:
             return
+        if self.pick == "fish_tpl":                # slider sizes the crop box
+            self._tpl_half = max(8, int(float(v)))
+            self.tol_val.configure(text=str(self._tpl_half))
+            if self._tpl_center is not None:
+                self._save_template()
+            self.redraw()
+            return
         setattr(self.cfg.colors, f"cap_{self.pick}_tol", int(float(v)))
         self.tol_val.configure(text=str(int(float(v))))
         self.redraw()
 
     def _reset_colour(self) -> None:
         if not self.pick:
+            return
+        if self.pick == "fish_tpl":
+            self.cfg.detection.fish_tpl_on = False
+            self._tpl_center = None
+            self._refresh_colour_ui()
+            self.hint.configure(text="Template off — the bot uses colour only. "
+                                     "Click the fish to capture again.")
+            self.redraw()
             return
         setattr(self.cfg.colors, f"cap_{self.pick}_on", False)
         self._refresh_colour_ui()
@@ -713,6 +815,17 @@ class Calibrator(ctk.CTkToplevel):
     def _refresh_colour_ui(self) -> None:
         """Sync the swatch, tolerance slider and caption to the stored values."""
         if not self.pick:
+            return
+        if self.pick == "fish_tpl":
+            on = self.cfg.detection.fish_tpl_on
+            self.swatch.configure(fg_color=COLOUR_ACCENT if on else "#000000")
+            self.swatch_txt.configure(
+                text=("template saved — active (green box below = where it "
+                      "matches now)") if on else
+                     "no template yet — click the centre of the fish",
+                text_color="#d7dade" if on else MUTED)
+            self.tol_slider.set(self._tpl_half)
+            self.tol_val.configure(text=str(self._tpl_half))
             return
         c = self.cfg.colors
         on = getattr(c, f"cap_{self.pick}_on", False)

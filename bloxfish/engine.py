@@ -104,6 +104,7 @@ class FishingEngine:
         self.bait_count: int | None = None
         self.controller = ReelController(cfg.physics, cfg.control, cfg.timing)
         self._zone_w_ref: float | None = None
+        self._fish_tpl = self._load_fish_template()   # colour-independent fallback
         # Session state. `run()` re-anchors these at the start of every session;
         # they are defaulted here so the engine is a valid object before then —
         # the GUI builds one to show settings, and the shop helpers read them.
@@ -230,7 +231,41 @@ class FishingEngine:
     def _meter_score(self) -> int:
         return charge_meter_score(self.screen.grab(self.meter_roi))
 
+    def _load_fish_template(self):
+        """Load fish_template.png (next to config.json) once, or None.
+
+        Only when `fish_tpl_on` is set. Returns a BGR array read_bar can match.
+        """
+        if not self.cfg.detection.fish_tpl_on:
+            return None
+        try:
+            import cv2
+            from .config import CONFIG_PATH
+            path = CONFIG_PATH.parent / "fish_template.png"
+            if not path.exists():
+                self.log("[warn] fish template is enabled but "
+                         "fish_template.png is missing — recapture it in "
+                         "Calibrate -> Advanced.")
+                return None
+            tpl = cv2.imread(str(path))
+            if tpl is not None:
+                self.log(f"[fish] template fallback on "
+                         f"({tpl.shape[1]}x{tpl.shape[0]})")
+            return tpl
+        except Exception:                              # noqa: BLE001
+            return None
+
     # -- states ------------------------------------------------------------
+    def _out_dir(self, name: str):
+        """Where diag/record files go: under `--dev`'s capture folder if set,
+        else the project's own `diag/` or `record/`."""
+        from pathlib import Path as _P
+        root = (_P(self.cfg.capture_dir) if self.cfg.capture_dir
+                else _P(__file__).resolve().parent.parent)
+        out = root / name
+        out.mkdir(parents=True, exist_ok=True)
+        return out
+
     def _dump_diag(self, tag: str) -> None:
         """Save the pixels behind a detection failure, for later analysis.
 
@@ -243,9 +278,7 @@ class FishingEngine:
             return
         try:
             import cv2
-            from pathlib import Path as _P
-            out = _P(__file__).resolve().parent.parent / "diag"
-            out.mkdir(exist_ok=True)
+            out = self._out_dir("diag")
             n = self._diag_n = getattr(self, "_diag_n", 0) + 1
             if n > self.cfg.diag_max:
                 return
@@ -284,9 +317,7 @@ class FishingEngine:
             return
         try:
             import cv2
-            from pathlib import Path as _P
-            out = _P(__file__).resolve().parent.parent / "record"
-            out.mkdir(exist_ok=True)
+            out = self._out_dir("record")
             cv2.imwrite(str(out / f"{n:04d}_strip.png"),
                         self.screen.grab(geo.strip))
             if geo.prog is not None:
@@ -568,7 +599,8 @@ class FishingEngine:
             frame = self.screen.grab(geo.full or geo.strip)
             st = read_bar(geo.slice_band(frame), geo, self.cfg.colors,
                           self._zone_w_ref, chest_min_w,
-                          self.cfg.detection.bar_track_min_frac)
+                          self.cfg.detection.bar_track_min_frac,
+                          self._fish_tpl, self.cfg.detection.fish_tpl_thr)
             if st is None:
                 # Time, not frames. The loop is unpaced (~60-140 Hz), so the old
                 # 6-frame rule declared the fish caught after ~100 ms of not

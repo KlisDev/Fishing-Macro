@@ -8,6 +8,7 @@ debug/
 .deps_installed
 config.json
 diag/
+.claude/
 
 # Diagnostic captures. Recordings for tools/vision_suite.py live OUTSIDE the
 # project folder entirely — it gets zipped and sent to testers, so a few
@@ -15,3 +16,7 @@ diag/
 # sitting in it.
 clips/
 record/
+
+# --dev capture folders and the per-machine fish template
+capture_*/
+fish_template.png

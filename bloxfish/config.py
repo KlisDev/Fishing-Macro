@@ -16,7 +16,7 @@ CONFIG_PATH = ROOT / "config.json"
 
 # Printed at startup. Bump this on every release: the fastest way to waste an
 # afternoon is debugging a bug report from a build that already has the fix.
-VERSION = "1.3.1"
+VERSION = "1.4.0"
 
 
 @dataclass
@@ -118,18 +118,26 @@ class Colors:
     cap_progress_on: bool = False
     cap_progress_bgr: tuple = (52, 210, 90)
     cap_progress_tol: int = 55
-    # Zone and fish change colour mid-fight, so their capture is UNIONED with
-    # the relational mask (adds the captured colour, never removes the
-    # green-OR-grey / teal-OR-blue handling) -- it can only broaden, so the
-    # catastrophic mid-fight zone loss stays impossible. You capture the normal
-    # green zone / teal fish tile; the grey-alarm and blue-flash states stay on
-    # the adaptive logic automatically.
+    # Zone and fish each have TWO states -- in-zone vs out-of-zone -- that render
+    # different colours (the zone greens when the fish is inside it and greys
+    # `(89,89,89)` when it escapes; the fish tile likewise). `cap_<e>_*` is the
+    # IN state, `cap_<e>_out_*` the OUT state; both are UNIONED with the
+    # relational mask, so they can only broaden it -- the built-in green/grey and
+    # teal/blue handling stays, and the catastrophic mid-fight loss is impossible
+    # even from a bad capture. A machine whose tiles are unusual (e.g. a purple
+    # fish tile) can pin both states here.
     cap_zone_on: bool = False
     cap_zone_bgr: tuple = (16, 150, 21)
     cap_zone_tol: int = 40
+    cap_zone_out_on: bool = False
+    cap_zone_out_bgr: tuple = (89, 89, 89)
+    cap_zone_out_tol: int = 30
     cap_fish_on: bool = False
     cap_fish_bgr: tuple = (133, 153, 16)
     cap_fish_tol: int = 40
+    cap_fish_out_on: bool = False
+    cap_fish_out_bgr: tuple = (142, 95, 24)
+    cap_fish_out_tol: int = 40
 
 
 @dataclass
@@ -359,6 +367,14 @@ class Detection:
     meter_right: float = 0.78
     meter_min_score_frac: float = 0.05   # of window height (~52 px @1080, 108 @2160)
 
+    # Fish template fallback (Calibrate -> Advanced -> "Fish image"). When the
+    # colour masks can't find the fish (a machine whose tile renders an odd
+    # colour), match a saved picture of the fish by shape instead -- colour
+    # independent. `fish_template.png` sits next to config.json; the engine
+    # loads it once. Only used as a fallback, so the common path stays cheap.
+    fish_tpl_on: bool = False
+    fish_tpl_thr: float = 0.55           # matchTemplate score to accept (0..1)
+
 
 @dataclass
 class Control:
@@ -573,6 +589,10 @@ class Config:
     record: bool = False
     record_every: float = 2.0      # seconds between saves
     record_max: int = 120
+    # `--dev`: one switch for debug+diag+record, all written under this folder
+    # (with a run.log) instead of the separate diag/ and record/ dirs, so a bug
+    # report is a single folder to zip. Runtime only -- never persisted.
+    capture_dir: str | None = None
 
     # Hotbar slot holding the fishing rod ('1'-'9' or '0'). Pressing it toggles
     # the rod in and out of the character's hands, which is the known cure for
@@ -622,9 +642,11 @@ class Config:
         # calibration like the boxes, not tuning constants, so they persist;
         # the `_on` flags default False so an install that never captured keeps
         # tracking code updates.
-        for elem in ("track", "chest", "progress", "zone", "fish"):
+        for elem in ("track", "chest", "progress", "zone", "fish",
+                     "zone_out", "fish_out"):
             fields |= {f"colors.cap_{elem}_on", f"colors.cap_{elem}_bgr",
                        f"colors.cap_{elem}_tol"}
+        fields |= {"detection.fish_tpl_on", "detection.fish_tpl_thr"}
         return fields
 
     @staticmethod

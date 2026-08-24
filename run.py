@@ -138,6 +138,9 @@ def main() -> int:
                     help="save the pixels behind any detection failure to diag/")
     ap.add_argument("--record", action="store_true",
                     help="save the reel strip while it works, to record/")
+    ap.add_argument("--dev", action="store_true",
+                    help="debug + diag + record together into one capture_<ts>/ "
+                         "folder (with run.log) -- one folder to zip for a report")
     ap.add_argument("--config", default=None)
     args = ap.parse_args()
 
@@ -149,7 +152,28 @@ def main() -> int:
     if args.record:
         cfg.record = True
 
-    engine = FishingEngine(cfg)
+    log = print
+    if args.dev:
+        import datetime
+        cfg.debug = cfg.diag = cfg.record = True
+        root = Path(__file__).resolve().parent
+        stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        cap = root / f"capture_{stamp}"
+        cap.mkdir(parents=True, exist_ok=True)
+        cfg.capture_dir = str(cap)
+        logfile = open(cap / "run.log", "a", encoding="utf-8")
+
+        def log(*parts):                               # tee console + file
+            line = " ".join(str(p) for p in parts)
+            print(line)
+            try:
+                logfile.write(line + "\n")
+                logfile.flush()
+            except Exception:                          # noqa: BLE001
+                pass
+        log(f"[dev] capturing everything to {cap}")
+
+    engine = FishingEngine(cfg, log=log)
     worker: threading.Thread | None = None
 
     if not _setup_prompts(cfg, engine):

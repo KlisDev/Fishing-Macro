@@ -86,12 +86,15 @@ def zone_mask_tracking(img: np.ndarray, c: Colors) -> np.ndarray:
     greyed = ((np.abs(g - b) <= c.zone_neutral_tol)
               & (g >= c.zone_g_min) & (g <= c.zone_neutral_g_max))
     branches = greenish | greyed
+    # Per-machine captures of the zone's two states (Calibrate -> Advanced),
+    # in (green) and out (grey). Unioned, never replacing: the built-in
+    # green/grey branches stay, so a capture that misses a state can't lose the
+    # zone mid-fight. Kept inside the neutral gate so a mistaken blue/red capture
+    # is rejected.
     if c.cap_zone_on:
-        # A per-machine capture of the NORMAL green zone (Calibrate -> Advanced).
-        # Unioned, never replacing: the grey-alarm branch stays, so a capture
-        # that misses the desaturated state can't lose the zone mid-fight. Kept
-        # inside the neutral gate so a mistaken blue/red capture is rejected.
         branches = branches | _near(img, c.cap_zone_bgr, c.cap_zone_tol)
+    if c.cap_zone_out_on:
+        branches = branches | _near(img, c.cap_zone_out_bgr, c.cap_zone_out_tol)
     return neutral & branches
 
 
@@ -118,10 +121,12 @@ def fish_mask(img: np.ndarray, c: Colors) -> np.ndarray:
     b, g, r = _split(img)
     m = ((b > c.fish_b_min) & (b > r + c.fish_b_over_r)
          & (g > r + c.fish_g_over_r))
+    # Per-machine captures of the fish tile's two states, in and out of the zone.
+    # Unioned, so the relational test above still covers whatever they miss.
     if c.cap_fish_on:
-        # Per-machine capture of the fish tile, unioned so both the teal and the
-        # alarm-blue states stay covered by the relational test above.
         m = m | _near(img, c.cap_fish_bgr, c.cap_fish_tol)
+    if c.cap_fish_out_on:
+        m = m | _near(img, c.cap_fish_out_bgr, c.cap_fish_out_tol)
     return m
 
 
@@ -138,6 +143,28 @@ def chest_mask(img: np.ndarray, c: Colors) -> np.ndarray:
     b, g, r = _split(img)
     return ((r > c.chest_r_min) & (g > c.chest_g_min) & (b < c.chest_b_max)
             & (r > b + c.chest_r_over_b) & (g > b + c.chest_g_over_b))
+
+
+def find_fish_template(strip: np.ndarray, template: np.ndarray,
+                       thr: float = 0.55) -> tuple[float, float] | None:
+    """Locate the fish by matching a saved picture of it, colour-independently.
+
+    The fallback for machines whose fish tile renders an unusual colour the
+    masks miss. `strip` and `template` are BGR. Returns the matched tile's
+    (left, right) columns, or None when the best match is below `thr`. Single
+    scale on purpose -- the template is captured at the user's own resolution,
+    so it already matches; a resize means recapture (documented).
+    """
+    th, tw = template.shape[:2]
+    sh, sw = strip.shape[:2]
+    if th > sh or tw > sw or tw < 4:
+        return None
+    res = cv2.matchTemplate(strip, template, cv2.TM_CCOEFF_NORMED)
+    _minv, maxv, _minl, maxl = cv2.minMaxLoc(res)
+    if maxv < thr:
+        return None
+    x0 = float(maxl[0])
+    return x0, x0 + tw
 
 
 def find_chest(strip: np.ndarray, colors: Colors,
@@ -560,7 +587,9 @@ class BarState:
 def read_bar(strip: np.ndarray, geo: BarGeometry, colors: Colors,
              zone_w_ref: float | None = None,
              chest_min_w: int = 0,
-             track_min_frac: float = 0.0) -> BarState | None:
+             track_min_frac: float = 0.0,
+             fish_template: np.ndarray | None = None,
+             fish_tpl_thr: float = 0.55) -> BarState | None:
     """Extract zone, fish and chest spans from a strip grabbed at `geo.strip`.
 
     The fish and chest tiles are drawn *on top of* the green zone. When one
@@ -590,7 +619,21 @@ def read_bar(strip: np.ndarray, geo: BarGeometry, colors: Colors,
     fx = np.flatnonzero(fcols > rows * 0.25)
     fish_l = fish_r = None
     if len(fx) >= 4:
-        fish_l, fish_r = float(fx.min()), float(fx.max())
+        # Largest contiguous block, not min..max. A stray matched pixel
+        # elsewhere -- or a broad per-machine capture -- would otherwise stretch
+        # the fish span across the whole bar and drop its centre between two
+        # blobs. The tile is one solid block, so the biggest run is the fish.
+        breaks = np.flatnonzero(np.diff(fx) > 4)
+        starts = np.concatenate(([0], breaks + 1))
+        ends = np.concatenate((breaks, [len(fx) - 1]))
+        a, b = max(zip(starts, ends), key=lambda s: fx[s[1]] - fx[s[0]])
+        fish_l, fish_r = float(fx[a]), float(fx[b])
+
+    if fish_l is None and fish_template is not None:
+        # Colour missed the fish -- fall back to matching its picture by shape.
+        m = find_fish_template(strip, fish_template, fish_tpl_thr)
+        if m is not None:
+            fish_l, fish_r = m
 
     chest = find_chest(strip, colors, chest_min_w) if chest_min_w else None
     chest_l, chest_r = chest if chest else (None, None)

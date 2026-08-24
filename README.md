@@ -151,12 +151,22 @@ It's entirely optional and off until you capture something — leave it alone an
 detection works exactly as before. **Reset to default** undoes a capture.
 
 The **zone** and **fish** are here too, but treated differently: because they
-change colour mid-fight (the zone greys out when the fish escapes), capturing
+change colour depending on whether the fish is inside the zone, each has an
+**in** and an **out** capture (zone green/grey, fish tile in/out). Capturing
 them only **adds** your colour on top of the built-in adaptive detection — it
-never replaces it, so it can't make the bot lose the fish mid-catch. You capture
-only the normal green zone / the fish tile; the grey and flash states stay
-automatic. (Drop reference pictures into `assets/gui/calib/` — `track.png`,
-`chest.png`, `progress.png`, `zone.png`, `fish.png` — to illustrate each one.)
+never replaces it, so it can't make the bot lose the fish mid-catch. If the bot
+loses the fish when it runs to the edge, capture **Fish tile (out)** — that's
+usually the fix.
+
+**Fish image (template)** is a colour-independent fallback for machines whose
+fish tile is an unusual colour: click the centre of the fish, size the box to
+frame it, and the bot finds the fish by its *picture* instead of its colour. A
+green box shows where it matches. Recapture it if you change your window size.
+It saves `fish_template.png` next to `config.json`.
+
+(Drop reference pictures into `assets/gui/calib/` — `track.png`, `chest.png`,
+`progress.png`, `zone.png`, `zone_out.png`, `fish.png`, `fish_out.png` — to
+illustrate each one.)
 
 **Re-shoot** retakes the screenshot (open the relevant dialogue in game first,
 so you can line things up against the real UI). **Save** writes to `config.json`.
@@ -206,10 +216,12 @@ mis-cropped detection box, daytime glare, and the rest — with how to avoid eac
 The one-line version: plain avatar, no aura fruit, fish at night, calibrate once
 on your own machine, Roblox fullscreen and focused, hands off the mouse.
 
-**Reporting a bug?** Run `python run.py --diag`. Whenever a detector fails it
-saves the exact pixels it was looking at into `diag/`. Those images plus the log
-say far more than a gameplay video, which is re-encoded and never shows what the
-bot actually sampled.
+**Reporting a bug?** Run `python run.py --dev`. It turns on the log, the
+failure-pixel dumps and the working-strip captures all at once and writes them
+into a single `capture_<timestamp>/` folder (with `run.log`) — zip that one
+folder and send it. (`--diag` alone still works if you only want the failure
+frames in `diag/`.) These say far more than a gameplay video, which is
+re-encoded and never shows what the bot actually sampled.
 
 ---
 
