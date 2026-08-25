@@ -106,7 +106,7 @@ def find_game_window(title: str, screen: Screen) -> tuple[Rect, bool]:
     live fight - which looks exactly like "it forgot it was fishing".
 
     Roblox renders its client area under the title bar, so a few pixels are
-    shaved off so the border never leaks into the colour masks.
+    shaved off so the border never leaks into the color masks.
     """
     try:
         import pygetwindow as gw

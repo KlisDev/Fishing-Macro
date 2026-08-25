@@ -20,7 +20,7 @@ Full cycle in the recording: ~17–19 s per fish.
 ## 2. Reel minigame — geometry
 
 Absolute pixels as recorded (3840x2160). The engine does **not** hardcode these —
-it re-detects the bar by colour every run — but they are the reference for
+it re-detects the bar by color every run — but they are the reference for
 normalised ratios.
 
 | Element | Absolute | Normalised |
@@ -32,7 +32,7 @@ normalised ratios.
 | Fish tile | width **153 px** | **8.7 %** of the track |
 | Slack (half-zone − half-fish) | **194 px** | 11.0 % of the track each side |
 
-### Colours (BGR, exact)
+### Colors (BGR, exact)
 
 | Element | BGR |
 |---|---|
@@ -175,7 +175,7 @@ Verified: the failing recording goes from 4 phantom "catches" to **0**, while
 the reference still yields exactly 3 minigames with the same boundaries and
 unchanged accuracy (zone p95 0.00 px, fish p95 1.00 px).
 
-A fixed "reference colour ± tolerance" match loses both the zone *and* the fish
+A fixed "reference color ± tolerance" match loses both the zone *and* the fish
 for the whole animation — precisely when the controller most needs to see. The
 detectors here use relational predicates instead:
 
@@ -201,7 +201,7 @@ tracks the character's head, which varies by avatar and camera zoom, and its
 size scales with distance. So a detector must not assume a fixed position or a
 fixed pixel count.
 
-Colour, measured from the reference (night) marker (HSV, OpenCV ranges H 0-179):
+Color, measured from the reference (night) marker (HSV, OpenCV ranges H 0-179):
 
 ```
 Hue        160 .. 178   (magenta-pink — NOT pure red, which is H 0-8)
@@ -217,7 +217,7 @@ parts of the ring over dark pixels — the ring fragments into arcs too small to
 pass the size gate, and a real daytime bite is *missed*. The `sat`/`val` floors
 are therefore kept low (`S≥45, V≥110`). That is safe only because the tight ROI
 excludes the player list and the character wears no red — nothing else pink can
-be in the box — so widening the colour band cannot re-introduce a false bite.
+be in the box — so widening the color band cannot re-introduce a false bite.
 
 The hue is the load-bearing fact: it sits on the magenta side of red, so a
 pure-red costume item (a candy cane, H ~0-8) does **not** match, while the
@@ -233,7 +233,7 @@ marker does regardless of the avatar. Detection (see `vision.find_bite_marker`):
 
 Sizes, measured (at 4K): the marker's ring is ~150×156 px and the `!` is
 44×96 px, so the larger side is always ≥ ~90 px. Every competing red/pink UI
-element is much smaller — a player-list faction icon is ≤56 px, a colour speck
+element is much smaller — a player-list faction icon is ≤56 px, a color speck
 smaller still — so the size gate separates them cleanly.
 
 ### Two detectors this replaced, and why
@@ -308,7 +308,7 @@ Consequences baked into the engine:
 
 While you hold LMB to cast, a thin bright-green bar fills next to the character:
 
-* colour **`(16,249,31)`** (BGR) — brighter and purer green than anything else
+* color **`(16,249,31)`** (BGR) — brighter and purer green than anything else
   on the playfield;
 * ~**13 px wide x 240 px tall** at 4K, world-anchored (moves with the camera);
 * the busiest column carries ~**240 green pixels while charging, 0 otherwise** —
@@ -698,7 +698,7 @@ gold/amber tile the same size as the fish tile (~8.7 % of the track).
 
 ### Why the engine does not watch the collect animation
 
-Both of the "after" states are traps for a colour detector: the tile whitens
+Both of the "after" states are traps for a color detector: the tile whitens
 *while* collecting (so a gold test drops out mid-grab, exactly when we must not
 lose it) and stays on the bar afterwards (so a gold test would re-trigger on a
 spent chest forever).
@@ -861,7 +861,7 @@ Bounding the width to `0.40 - 0.55` of the window keeps every genuine bar and
 rejects all six phantoms.
 
 > **Not yet validated against a recording.** No chest occurs in any capture
-> available here, so the colour thresholds above come from screenshots rather
+> available here, so the color thresholds above come from screenshots rather
 > than measured pixels. What *is* verified: the detector produces **zero false
 > positives** across 942 real minigame frames, and zone/fish accuracy is
 > unchanged (zone p95 0.00 px, fish p95 1.00 px). A single recording of a chest

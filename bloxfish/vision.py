@@ -3,12 +3,12 @@
 Two detectors:
 
   * `find_bar`   — locates the reel minigame bar anywhere in a search region,
-                   by colour. Run once when the minigame starts.
+                   by color. Run once when the minigame starts.
   * `read_bar`   — given a located bar, extracts zone / fish / progress from a
                    thin strip. This is the one that runs at 140 Hz.
   * `find_bite_marker` — finds the "!" bite ring by hue + shape.
 
-Nothing here hardcodes a resolution: the bar is found by colour and everything
+Nothing here hardcodes a resolution: the bar is found by color and everything
 downstream is expressed relative to the detected track width.
 """
 
@@ -36,9 +36,9 @@ def _split(img: np.ndarray):
 def _near(img: np.ndarray, ref, tol: int) -> np.ndarray:
     """Pixels within `tol` of the captured BGR `ref` on every channel.
 
-    The opt-in per-machine colour override (Calibrate -> Advanced). Only ever
-    used for the stable-coloured elements -- the track background, the chest
-    tile, the progress fill -- never the zone or fish, which change colour
+    The opt-in per-machine color override (Calibrate -> Advanced). Only ever
+    used for the stable-colored elements -- the track background, the chest
+    tile, the progress fill -- never the zone or fish, which change color
     during a fight and stay on their relational masks.
     """
     b, g, r = _split(img)
@@ -108,12 +108,20 @@ def track_mask(img: np.ndarray, c: Colors) -> np.ndarray:
     8 below green, so every track pixel failed and coverage read 0.04 instead
     of 0.70. The bar was plainly there; the mask simply could not see it.
     """
-    if c.cap_track_on:
-        return _near(img, c.cap_track_bgr, c.cap_track_tol)
     b, g, r = _split(img)
     tol = c.track_neutral_tol
-    return ((np.abs(b - c.track[0]) <= c.track_tol)
-            & (np.abs(b - g) <= tol) & (np.abs(g - r) <= tol))
+    m = ((np.abs(b - c.track[0]) <= c.track_tol)
+         & (np.abs(b - g) <= tol) & (np.abs(g - r) <= tol))
+    # A per-machine capture (Calibrate -> Advanced) is UNIONED, never a
+    # replacement. The track mask is load-bearing -- find_bar locates the whole
+    # bar through it -- so a bad capture that replaced it zeroed detection and
+    # the bot went blind to a bar plainly on screen (seen in the field: a track
+    # captured as (95,85,91) tol 11 dropped coverage to 0.09 and every reel
+    # reported "bar never appeared"). Unioned, a bad capture can only add stray
+    # pixels; the relational default still finds the track.
+    if c.cap_track_on:
+        m = m | _near(img, c.cap_track_bgr, c.cap_track_tol)
+    return m
 
 
 def fish_mask(img: np.ndarray, c: Colors) -> np.ndarray:
@@ -138,18 +146,23 @@ def chest_mask(img: np.ndarray, c: Colors) -> np.ndarray:
     track grey `(33,33,33)` — so a warm-dominant test separates it cleanly and
     cannot be confused with the fish.
     """
-    if c.cap_chest_on:
-        return _near(img, c.cap_chest_bgr, c.cap_chest_tol)
     b, g, r = _split(img)
-    return ((r > c.chest_r_min) & (g > c.chest_g_min) & (b < c.chest_b_max)
-            & (r > b + c.chest_r_over_b) & (g > b + c.chest_g_over_b))
+    m = ((r > c.chest_r_min) & (g > c.chest_g_min) & (b < c.chest_b_max)
+         & (r > b + c.chest_r_over_b) & (g > b + c.chest_g_over_b))
+    # Per-machine capture unioned, not replacing: a machine whose chest renders
+    # an odd color the default misses gets it added, while the default still
+    # covers everyone else. Read only inside the located bar, so a warm color
+    # elsewhere on screen cannot create a phantom chest.
+    if c.cap_chest_on:
+        m = m | _near(img, c.cap_chest_bgr, c.cap_chest_tol)
+    return m
 
 
 def find_fish_template(strip: np.ndarray, template: np.ndarray,
                        thr: float = 0.55) -> tuple[float, float] | None:
-    """Locate the fish by matching a saved picture of it, colour-independently.
+    """Locate the fish by matching a saved picture of it, color-independently.
 
-    The fallback for machines whose fish tile renders an unusual colour the
+    The fallback for machines whose fish tile renders an unusual color the
     masks miss. `strip` and `template` are BGR. Returns the matched tile's
     (left, right) columns, or None when the best match is below `thr`. Single
     scale on purpose -- the template is captured at the user's own resolution,
@@ -186,14 +199,17 @@ def progress_mask(img: np.ndarray, c: Colors | None = None) -> np.ndarray:
     """Filled part of the thin progress bar: bright green (85,250,149)->(36,188,52).
 
     `c` is optional so the many call sites that only ever see the default green
-    stay untouched; pass it to honour a per-machine capture of the fill colour.
+    stay untouched; pass it to honour a per-machine capture of the fill color.
     The two-tone witness (`progress_track_mask`) is deliberately left on its
     hardcoded numbers -- it is load-bearing and gets its own pass later.
     """
-    if c is not None and c.cap_progress_on:
-        return _near(img, c.cap_progress_bgr, c.cap_progress_tol)
     b, g, r = _split(img)
-    return (g > 150) & (b < 145) & (r < 185)
+    m = (g > 150) & (b < 145) & (r < 185)
+    # Per-machine capture unioned, not replacing (matches track/chest/zone/fish):
+    # a bad capture can only broaden the fill, never blank it.
+    if c is not None and c.cap_progress_on:
+        m = m | _near(img, c.cap_progress_bgr, c.cap_progress_tol)
+    return m
 
 
 def progress_track_mask(img: np.ndarray) -> np.ndarray:
@@ -456,7 +472,7 @@ def find_bar_by_strip(img: np.ndarray, origin: tuple[int, int], colors: Colors,
     it never acquires the bar, gives up, and recasts into a live fight.
 
     The progress strip has no such problem: nothing is ever drawn over it and
-    it does not change colour, which is why it is already the thing that
+    it does not change color, which is why it is already the thing that
     *confirms* a candidate. Here it becomes the thing that finds one. Walk up
     from the strip while the rows still look like bar (dark track, zone in
     either state, or fish tile) and that is the band.
@@ -630,7 +646,7 @@ def read_bar(strip: np.ndarray, geo: BarGeometry, colors: Colors,
         fish_l, fish_r = float(fx[a]), float(fx[b])
 
     if fish_l is None and fish_template is not None:
-        # Colour missed the fish -- fall back to matching its picture by shape.
+        # Color missed the fish -- fall back to matching its picture by shape.
         m = find_fish_template(strip, fish_template, fish_tpl_thr)
         if m is not None:
             fish_l, fish_r = m
@@ -696,7 +712,7 @@ class BiteMarker:
 
 def find_bite_marker(img: np.ndarray, colors: Colors, det: Detection,
                      origin: tuple[int, int] = (0, 0)) -> BiteMarker | None:
-    """Locate the bite `!` billboard by *shape*, not by a raw colour count.
+    """Locate the bite `!` billboard by *shape*, not by a raw color count.
 
     The old detector summed pink pixels inside a hard-coded BGR box over a fixed
     rectangle. That broke across characters and cameras for three reasons: the
@@ -739,7 +755,7 @@ def find_bite_marker(img: np.ndarray, colors: Colors, det: Detection,
     for i in range(1, n):
         x, y, bw, bh, area = (int(v) for v in stats[i])
         # Size is the decisive gate: the marker's ring/"!" is big; player-list
-        # icons and colour specks are small.
+        # icons and color specks are small.
         if max(bw, bh) < min_dim:
             continue
         if area < area_floor:

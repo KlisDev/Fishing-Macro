@@ -393,6 +393,12 @@ def leave_dialogue(engine, tries: int = 3) -> bool:
     way: stepping forward repeatedly would march the character into the water.
     """
     cfg = engine.cfg.shop
+    # Let the menu finish rendering before the first click. The craft window
+    # closing snaps the dialogue back to the main menu, and 'Nevermind' is the
+    # last entry to draw; clicking into a half-drawn menu misses and the bot
+    # visibly stabs at it. Tunable in Advanced cooldowns ("Before clicking
+    # Nevermind").
+    engine._sleep(cfg.before_leave)
     for k in range(max(1, tries)):
         if not engine._alive() or not in_dialogue(engine):
             return True

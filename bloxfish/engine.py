@@ -94,6 +94,11 @@ class FishingEngine:
         d = cfg.detection
         self.bar_search = self.window.sub(d.bar_search_left, d.bar_search_top,
                                           d.bar_search_right, d.bar_search_bottom)
+        # Optional tighter "zone track" region for reading the bar (see
+        # Detection.zone_track_on). Always built; used only when enabled. The
+        # wide bar_search stays the presence check either way.
+        self.zone_track = self.window.sub(d.zone_track_left, d.zone_track_top,
+                                          d.zone_track_right, d.zone_track_bottom)
         self.bite_roi = self.window.sub(d.bite_left, d.bite_top, d.bite_right, d.bite_bottom)
         self.meter_roi = self.window.sub(d.meter_left, d.meter_top,
                                          d.meter_right, d.meter_bottom)
@@ -104,7 +109,7 @@ class FishingEngine:
         self.bait_count: int | None = None
         self.controller = ReelController(cfg.physics, cfg.control, cfg.timing)
         self._zone_w_ref: float | None = None
-        self._fish_tpl = self._load_fish_template()   # colour-independent fallback
+        self._fish_tpl = self._load_fish_template()   # color-independent fallback
         # Session state. `run()` re-anchors these at the start of every session;
         # they are defaulted here so the engine is a valid object before then —
         # the GUI builds one to show settings, and the shop helpers read them.
@@ -114,6 +119,8 @@ class FishingEngine:
         self._buy_failures = 0
         self._since_sell = 0
         self._clip_warned = False
+        self._zt_warned = False       # warned once that the zone track box is too tight
+        self._zt_fallback = False     # latched: read the wide band, not the box
 
         if not valid_slot(cfg.rod_slot):
             self.log(f"[warn] rod_slot {cfg.rod_slot!r} is not 1-9 or 0 — "
@@ -192,15 +199,59 @@ class FishingEngine:
         return not self._stop
 
     # -- helpers -----------------------------------------------------------
+    def _read_region(self):
+        """Where the reel bar is found and read from.
+
+        The tighter zone-track box when the user enabled it, else the wide reel
+        bar band. Reading from the box pins the track width and keeps out-of-bar
+        scenery (dock floor, water) out of the picture; the wide band stays the
+        presence check (`_minigame_running`).
+        """
+        if (self.cfg.detection.zone_track_on
+                and not getattr(self, "_zt_fallback", False)):
+            return self.zone_track
+        return self.bar_search
+
+    def _find_bar_in(self, region) -> BarGeometry | None:
+        img = self.screen.grab(region)
+        return find_bar(img, (region.left, region.top),
+                        self.cfg.colors, self.cfg.detection, self.window.width)
+
     def _look_for_bar(self) -> BarGeometry | None:
-        img = self.screen.grab(self.bar_search)
-        geo = find_bar(img, (self.bar_search.left, self.bar_search.top),
-                       self.cfg.colors, self.cfg.detection, self.window.width)
+        region = self._read_region()
+        geo = self._find_bar_in(region)
+        if geo is None and region is not self.bar_search:
+            # The zone track box found nothing. Only fall back — and only warn —
+            # if the *wider* band does find a bar here: that means the box is too
+            # tight (typically cutting off the thin progress strip find_bar needs)
+            # rather than there simply being no minigame on screen. A mis-drawn
+            # box must never brick the reel with "bar never appeared".
+            wide = self._find_bar_in(self.bar_search)
+            if wide is not None:
+                # A box that clips the bar clips it every frame — a permanent
+                # geometry problem, not a transient. Latch the fallback so the
+                # rest of the session reads the wide band directly, instead of
+                # grabbing twice on every poll (costly on a slow machine, and it
+                # would stall the width lock at reel start).
+                self._zt_fallback = True
+                self._warn_zone_track_fallback()
+                self._check_clipped(wide, self.bar_search)
+                return wide
         if geo is not None:
-            self._check_clipped(geo)
+            self._check_clipped(geo, region)
         return geo
 
-    def _check_clipped(self, geo: BarGeometry) -> None:
+    def _warn_zone_track_fallback(self) -> None:
+        if getattr(self, "_zt_warned", False):
+            return
+        self._zt_warned = True
+        self.log("[warn] the Zone track box did not contain a full reel bar — it "
+                 "is probably cutting off the thin progress strip beneath the "
+                 "track. Using the wider Reel bar band instead. Redraw it a little "
+                 "taller so it includes the progress strip, or untick it in "
+                 "Calibrate.")
+
+    def _check_clipped(self, geo: BarGeometry, region=None) -> None:
         """Complain if the search box looks like it is cutting the bar in half.
 
         Measured on a recording: the box can be pulled in until it hugs the bar
@@ -209,18 +260,51 @@ class FishingEngine:
         every position downstream is a fraction of the wrong width. The reel
         then aims at the wrong place for the whole fight. A track running hard
         into the edge of the box is the only warning sign available, so say so
-        rather than let it read wrong in silence.
+        rather than let it read wrong in silence. (The width lock at reel start
+        mitigates this by keeping the widest read, but a box clipped on *every*
+        frame still reads short, so the warning stays.)
         """
         if getattr(self, "_clip_warned", False):
             return
-        if (geo.x0 <= self.bar_search.left + 1
-                or geo.x1 >= self.bar_search.right - 1):
+        region = region or self.bar_search
+        # Name whichever box actually clipped, not merely whichever is enabled:
+        # on a zone-track fallback we check the *bar_search* box here.
+        box = "Zone track" if region is self.zone_track else "Reel bar band"
+        if (geo.x0 <= region.left + 1
+                or geo.x1 >= region.right - 1):
             self._clip_warned = True
             self.log("[warn] the reel bar runs right to the edge of the search "
                      "box, so the box may be cutting it short — the bot would "
-                     "then aim against the wrong track width. Widen the 'Reel "
-                     "bar band' in Calibrate controls until there is a visible "
-                     "gap either side of the bar.")
+                     f"then aim against the wrong track width. Widen the '{box}' "
+                     "in Calibrate controls until there is a visible gap either "
+                     "side of the bar.")
+
+    def _acquire_widest(self, geo: BarGeometry) -> BarGeometry:
+        """Return the widest bar read over the next few frames.
+
+        `track_w` is locked once per reel and every controller target is a
+        fraction of it, so a single acquisition that caught the track clipped --
+        the fish or chest tile sitting over an end of the progress strip when
+        `find_bar` measured it -- mis-scales the entire fight. Observed on one 4K
+        clip: re-running the finder per frame, the measured width swung from 1117
+        to 1763 px. The progress strip is only ever occluded, never drawn wider
+        than the real track, so the widest read across a handful of frames is the
+        true width. Cheap: a few grabs at the very start of a 5-6 s fight, each
+        blocking to the next frame so successive reads see the tile in different
+        places.
+        """
+        best = geo
+        seen = 1
+        for _ in range(max(1, self.cfg.detection.bar_lock_frames) - 1):
+            if not self._alive():
+                break
+            g = self._look_for_bar()
+            if g is not None:
+                seen += 1
+                if g.width > best.width:
+                    best = g
+        self._lock_frames_seen = seen
+        return best
 
     def _bite_now(self) -> bool:
         img = self.screen.grab(self.bite_roi)
@@ -297,7 +381,7 @@ class FishingEngine:
         """Save the regions the detectors read, losslessly, while things work.
 
         `--diag` only fires on a failure, which is too late for the questions
-        that keep coming up. Every colour threshold in vision.py is a question
+        that keep coming up. Every color threshold in vision.py is a question
         about what a pixel really is, and a re-encoded gameplay video cannot
         answer one: a tester's track measured (24,32,32) where the author's
         measured (34,34,34), and their recording also renders pure white as
@@ -413,7 +497,9 @@ class FishingEngine:
         """
         self.state = State.IDLE
         t = self.cfg.timing
-        attempts = t.max_cast_attempts if t.verify_cast else 1
+        # max(1, …): a hand-edited or Advanced-cooldowns 0 must not silently
+        # stop the bot casting entirely (range(1, 1) is empty).
+        attempts = max(1, t.max_cast_attempts) if t.verify_cast else 1
 
         # Never cast into a live minigame. If the bar detector has lost the bar
         # for any reason, casting here is the "forgot it was fishing" symptom;
@@ -482,7 +568,7 @@ class FishingEngine:
 
         We require the marker to persist for a few consecutive polls before
         acting: the real billboard stays up ~0.9 s, so a couple of confirmations
-        (~0.1 s) cost nothing but reject any one-frame colour fluke. A bar can
+        (~0.1 s) cost nothing but reject any one-frame color fluke. A bar can
         also appear straight from a bite we polled through, so we watch for that
         too and let the caller reel it.
         """
@@ -540,10 +626,19 @@ class FishingEngine:
             self._dump_diag("no_bar")
             return False
 
+        # Width lock: the first read may have caught the track clipped by a tile
+        # over the progress strip, which would mis-scale every target for the
+        # whole reel. Keep the widest read over a few more frames.
+        geo = self._acquire_widest(geo)
+
         self.state = State.REELING
         self._zone_w_ref = geo.zone_w
         self.controller.reset()
         track_w = float(geo.width)
+        self.log(f"[reel] track width locked at {int(track_w)} px "
+                 f"(widest of {self._lock_frames_seen}"
+                 + (", zone track box" if self.cfg.detection.zone_track_on
+                    else "") + ")")
         fish_half = 0.0
         # control_hz <= 0 means unpaced: the grab already blocks until the next
         # vblank, so adding a sleep on top only risks missing one.

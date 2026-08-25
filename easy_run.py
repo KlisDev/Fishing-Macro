@@ -72,7 +72,7 @@ try:
 except ImportError:                                # noqa: BLE001
     Image = None
 
-from bloxfish.config import Config                 # noqa: E402
+from bloxfish.config import Config, COOLDOWNS       # noqa: E402
 from bloxfish.engine import FishingEngine          # noqa: E402
 from bloxfish import vision                        # noqa: E402
 
@@ -134,7 +134,7 @@ class Card(ctk.CTkFrame):
 # calibration
 # --------------------------------------------------------------------------
 
-# Groups: (title, icon, colour, entries)
+# Groups: (title, icon, color, entries)
 # Entry:  (key, kind, config-holder, fields, label, description, image key)
 #   kind "box" -> search area   : drag to move, drag the corner to resize
 #   kind "dot" -> click point   : drag onto the button
@@ -151,6 +151,18 @@ CALIB_GROUPS = [
          "energy bars on the left, the Power/Mastery strip on the right. "
          "Leaving them out is the single most useful thing on this screen.",
          "bar_search"),
+        ("zone_track", "box", "detection",
+         ("zone_track_left", "zone_track_top",
+          "zone_track_right", "zone_track_bottom"), "Zone track",
+         "Optional, and off until you tick the box below. Hug the INNER track "
+         "tightly — the dark rail the zone slides along, including the thin "
+         "progress strip under it — with just a hair of margin. When on, the "
+         "bot finds and reads the bar from here instead of the Reel bar band, "
+         "which pins the track width (the reel aims at fractions of that width, "
+         "so a mis-measured width throws off the whole fight) and keeps the "
+         "dock floor and water out of shot at night. The Reel bar band still "
+         "does its main job; this is a focus assistant on top of it.",
+         "zone_track"),
         ("bite", "box", "detection",
          ("bite_left", "bite_top", "bite_right", "bite_bottom"), "Bite marker",
          "Cover where the pink “!” pops up over your head. Keep it snug around "
@@ -227,25 +239,25 @@ GHOST = "#5b6169"
 
 
 def _group_of(key: str):
-    for title, icon, colour, entries in CALIB_GROUPS:
+    for title, icon, color, entries in CALIB_GROUPS:
         for e in entries:
             if e[0] == key:
-                return title, icon, colour, e
+                return title, icon, color, e
     return None, None, None, None
 
 
-# Advanced colour capture (Calibrate -> Advanced). Each key maps to the
+# Advanced color capture (Calibrate -> Advanced). Each key maps to the
 # cfg.colors.cap_<key>_{on,bgr,tol} fields and to the mask below. Only the
-# stable-coloured elements are here -- the zone and fish change colour during a
+# stable-colored elements are here -- the zone and fish change color during a
 # fight and stay on their relational masks, so they are deliberately absent.
-COLOUR_ITEMS = [
+COLOR_ITEMS = [
     ("track", "Reel bar background",
      "The dark grey track behind the fish. Click the empty dark part of the "
      "reel bar. This pins bar detection to your screen's exact grey — the thing "
      "that renders differently on different GPUs."),
     ("chest", "Treasure chest tile",
      "The gold / amber square a chest sits on. Click the tile right behind a "
-     "chest. Chest colours were never tuned per machine, so this is the one "
+     "chest. Chest colors were never tuned per machine, so this is the one "
      "that helps most."),
     ("progress", "Progress bar fill",
      "The bright green fill of the thin bar just under the reel bar. Click the "
@@ -263,15 +275,15 @@ COLOUR_ITEMS = [
      "tile background (not the fish itself). Added to the adaptive detection."),
     ("fish_out", "Fish tile (out)",
      "The SAME tile when the fish is OUTSIDE the zone — it renders a different "
-     "colour. Catch a frame with the fish outside and click its tile. This is "
+     "color. Catch a frame with the fish outside and click its tile. This is "
      "the one that fixes 'the bot loses the fish when it runs'."),
     ("fish_tpl", "Fish image (template)",
-     "Colour-independent fallback: click the CENTRE of the fish, then size the "
+     "Color-independent fallback: click the CENTRE of the fish, then size the "
      "box with the slider so it frames the fish tile. The bot then finds the "
-     "fish by its PICTURE, so it works even when the tile colour is unusual. "
+     "fish by its PICTURE, so it works even when the tile color is unusual. "
      "Saves fish_template.png. Recapture it if you change your window size."),
 ]
-COLOUR_MASK = {
+COLOR_MASK = {
     "track": vision.track_mask,
     "chest": vision.chest_mask,
     "progress": vision.progress_mask,   # (img, c) — same call shape
@@ -280,7 +292,7 @@ COLOUR_MASK = {
     "fish": vision.fish_mask,
     "fish_out": vision.fish_mask,
 }
-COLOUR_ACCENT = "#e879f9"
+COLOR_ACCENT = "#e879f9"
 
 
 _BLANK_IMG = None
@@ -335,7 +347,7 @@ class Calibrator(ctk.CTkToplevel):
         self.geometry("1280x820")
         self.master_app = master
         self.sel: str | None = None
-        self.pick: str | None = None      # active Advanced-colour element, if any
+        self.pick: str | None = None      # active Advanced-color element, if any
         self._tpl_center: tuple | None = None    # fish-template crop centre (game px)
         self._tpl_half = 34                       # crop half-size (game px)
         self.drag: tuple | None = None
@@ -356,12 +368,12 @@ class Calibrator(ctk.CTkToplevel):
                                       label_text="  Pick something to line up")
         left.grid(row=0, column=0, sticky="ns", padx=(0, 10))
         self.buttons: dict[str, ctk.CTkButton] = {}
-        for title, icon, colour, entries in CALIB_GROUPS:
+        for title, icon, color, entries in CALIB_GROUPS:
             hdr = ctk.CTkFrame(left, fg_color="transparent")
             hdr.pack(fill="x", pady=(14, 4), padx=2)
             ctk.CTkLabel(hdr, text=f"{icon}  {title}", anchor="w",
                          font=ctk.CTkFont(size=13, weight="bold"),
-                         text_color=colour).pack(side="left")
+                         text_color=color).pack(side="left")
             for key, kind, _h, _f, label, _d, _i in entries:
                 mark = "▭" if kind == "box" else "⦿"
                 what = "area" if kind == "box" else "click"
@@ -379,23 +391,23 @@ class Calibrator(ctk.CTkToplevel):
                      anchor="w", justify="left", text_color=MUTED,
                      font=ctk.CTkFont(size=11)).pack(fill="x", padx=6, pady=(16, 4))
 
-        # ---- Advanced: per-machine colour capture -----------------------
-        self.colour_buttons: dict[str, ctk.CTkButton] = {}
+        # ---- Advanced: per-machine color capture -----------------------
+        self.color_buttons: dict[str, ctk.CTkButton] = {}
         hdr = ctk.CTkFrame(left, fg_color="transparent")
         hdr.pack(fill="x", pady=(14, 4), padx=2)
-        ctk.CTkLabel(hdr, text="🎨  Advanced — colours", anchor="w",
+        ctk.CTkLabel(hdr, text="🎨  Advanced — colors", anchor="w",
                      font=ctk.CTkFont(size=13, weight="bold"),
-                     text_color=COLOUR_ACCENT).pack(side="left")
-        for key, label, _desc in COLOUR_ITEMS:
+                     text_color=COLOR_ACCENT).pack(side="left")
+        for key, label, _desc in COLOR_ITEMS:
             row = ctk.CTkButton(
                 left, text=f"   🎨   {label}", anchor="w", height=34,
                 fg_color="transparent", hover_color="#2b3036",
                 text_color="#d7dade", font=ctk.CTkFont(size=12),
-                command=lambda k=key: self.select_colour(k))
+                command=lambda k=key: self.select_color(k))
             row.pack(fill="x", padx=2, pady=1)
-            self.colour_buttons[key] = row
+            self.color_buttons[key] = row
         ctk.CTkLabel(left, text="\nOptional. Pin the bot to your screen's exact\n"
-                               "colours. Off until you capture one.\n",
+                               "colors. Off until you capture one.\n",
                      anchor="w", justify="left", text_color=MUTED,
                      font=ctk.CTkFont(size=11)).pack(fill="x", padx=6, pady=(4, 4))
 
@@ -443,33 +455,58 @@ class Calibrator(ctk.CTkToplevel):
         self.d_img = ctk.CTkLabel(det, text="")
         self.d_img.grid(row=0, column=1, rowspan=2, padx=16, pady=12)
 
-        # Colour-capture controls: shown only while an Advanced-colour item is
+        # Color-capture controls: shown only while an Advanced-color item is
         # picked. Grid-removed by default so the normal box/dot flow is unchanged.
-        self.colour_frame = ctk.CTkFrame(det, fg_color="transparent")
-        self.colour_frame.grid(row=2, column=0, columnspan=2, sticky="ew",
+        self.color_frame = ctk.CTkFrame(det, fg_color="transparent")
+        self.color_frame.grid(row=2, column=0, columnspan=2, sticky="ew",
                                padx=16, pady=(0, 12))
-        self.colour_frame.grid_columnconfigure(1, weight=1)
-        self.colour_frame.grid_remove()
-        self.swatch = ctk.CTkLabel(self.colour_frame, text="", width=54,
+        self.color_frame.grid_columnconfigure(1, weight=1)
+        self.color_frame.grid_remove()
+        self.swatch = ctk.CTkLabel(self.color_frame, text="", width=54,
                                    height=26, corner_radius=6, fg_color="#000000")
         self.swatch.grid(row=0, column=0, padx=(0, 10))
-        self.swatch_txt = ctk.CTkLabel(self.colour_frame, text="", anchor="w",
+        self.swatch_txt = ctk.CTkLabel(self.color_frame, text="", anchor="w",
                                        text_color=MUTED)
         self.swatch_txt.grid(row=0, column=1, columnspan=2, sticky="w")
-        ctk.CTkLabel(self.colour_frame, text="Tolerance", anchor="w").grid(
+        ctk.CTkLabel(self.color_frame, text="Tolerance", anchor="w").grid(
             row=1, column=0, sticky="w", pady=(10, 0))
-        self.tol_slider = ctk.CTkSlider(self.colour_frame, from_=4, to=90,
+        self.tol_slider = ctk.CTkSlider(self.color_frame, from_=4, to=90,
                                         number_of_steps=86, command=self._on_tol)
         self.tol_slider.grid(row=1, column=1, sticky="ew", pady=(10, 0), padx=8)
-        self.tol_val = ctk.CTkLabel(self.colour_frame, text="", width=30)
+        self.tol_val = ctk.CTkLabel(self.color_frame, text="", width=30)
         self.tol_val.grid(row=1, column=2, pady=(10, 0))
-        ctk.CTkButton(self.colour_frame, text="Reset to default", width=140,
+        ctk.CTkButton(self.color_frame, text="Reset to default", width=140,
                       fg_color="#3a3f45", hover_color="#4a5057",
-                      command=self._reset_colour).grid(row=2, column=1,
+                      command=self._reset_color).grid(row=2, column=1,
                                                        sticky="w", pady=(10, 0),
                                                        padx=8)
 
+        # Zone-track opt-in: shown only while the "Zone track" box is selected.
+        # A drawn-but-unchecked box stays inert (default off), matching the
+        # color items' opt-in gate. Shares row 2 with color_frame — the two are
+        # never shown at once (color = pick mode, this = a box selection).
+        self.ztrack_frame = ctk.CTkFrame(det, fg_color="transparent")
+        self.ztrack_frame.grid(row=2, column=0, columnspan=2, sticky="ew",
+                               padx=16, pady=(0, 12))
+        self.ztrack_frame.grid_remove()
+        self.ztrack_var = ctk.BooleanVar(
+            value=bool(self.cfg.detection.zone_track_on))
+        ctk.CTkCheckBox(self.ztrack_frame, variable=self.ztrack_var,
+                        command=self._on_ztrack_toggle,
+                        text="Use this box to read the bar — pins the track "
+                             "width and keeps out-of-bar scenery (dock floor, "
+                             "water) out of the picture. Leave off to use the "
+                             "wider Reel bar band.").grid(row=0, column=0,
+                                                          sticky="w")
+
         self.after(250, self.shoot)
+
+    def _on_ztrack_toggle(self) -> None:
+        """Opt in/out of reading the bar from the Zone track box."""
+        try:
+            self.cfg.detection.zone_track_on = bool(self.ztrack_var.get())
+        except Exception:                              # noqa: BLE001
+            pass
 
     # -- screenshot -------------------------------------------------------
     def shoot(self) -> None:
@@ -556,8 +593,8 @@ class Calibrator(ctk.CTkToplevel):
     _HALO = ((-1, 0), (1, 0), (0, -1), (0, 1),
              (-1, -1), (1, -1), (-1, 1), (1, 1), (-2, 0), (2, 0))
 
-    def _text(self, x: float, y: float, text: str, colour: str) -> list:
-        """Canvas text with a black halo — the game behind it is any colour.
+    def _text(self, x: float, y: float, text: str, color: str) -> list:
+        """Canvas text with a black halo — the game behind it is any color.
 
         Returns every id it made, each with its offset from the anchor, so the
         label can be dragged along with its shape instead of being redrawn.
@@ -566,7 +603,7 @@ class Calibrator(ctk.CTkToplevel):
         ids = [(self.canvas.create_text(x + dx, y + dy, text=text,
                                         fill="#000000", anchor="w", font=font),
                 dx, dy) for dx, dy in self._HALO]
-        ids.append((self.canvas.create_text(x, y, text=text, fill=colour,
+        ids.append((self.canvas.create_text(x, y, text=text, fill=color,
                                             anchor="w", font=font), 0, 0))
         return ids
 
@@ -585,7 +622,7 @@ class Calibrator(ctk.CTkToplevel):
     def redraw(self) -> None:
         self.canvas.delete("all")
         self.shapes.clear()
-        # While an Advanced colour is picked and captured, show the screenshot
+        # While an Advanced color is picked and captured, show the screenshot
         # with everything the bot would match tinted magenta — the live "what
         # the detector sees" preview. Otherwise the plain screenshot.
         base = getattr(self, "_tk_img", None)
@@ -598,11 +635,11 @@ class Calibrator(ctk.CTkToplevel):
         if self.win is None:                       # no screenshot yet
             return
 
-        for title, icon, colour, entries in CALIB_GROUPS:
+        for title, icon, color, entries in CALIB_GROUPS:
             for entry in entries:
                 key, kind, _holder, fields, label = entry[:5]
                 active = key == self.sel
-                col = colour if active else GHOST
+                col = color if active else GHOST
                 if kind == "box":
                     x0, y0, x1, y1 = self._box_px(*self._fracs(entry))
                     rid = self.canvas.create_rectangle(
@@ -649,7 +686,7 @@ class Calibrator(ctk.CTkToplevel):
             x1 = (cx + hx) * self.scale
             y1 = (cy + hx) * self.scale
             self.canvas.create_rectangle(x0, y0, x1, y1,
-                                         outline=COLOUR_ACCENT, width=2)
+                                         outline=COLOR_ACCENT, width=2)
         # where does the saved template match right now?
         if self.cfg.detection.fish_tpl_on and np is not None and self._shot:
             try:
@@ -700,16 +737,21 @@ class Calibrator(ctk.CTkToplevel):
         """Make `key` the editable item. Must never raise: if this dies, the
         list stops responding and the tool looks frozen."""
         self.sel = key
-        self.pick = None                       # leave colour-pick mode
-        self.colour_frame.grid_remove()
-        for b in self.colour_buttons.values():
+        self.pick = None                       # leave color-pick mode
+        self.color_frame.grid_remove()
+        if key == "zone_track":
+            self.ztrack_var.set(bool(self.cfg.detection.zone_track_on))
+            self.ztrack_frame.grid()
+        else:
+            self.ztrack_frame.grid_remove()
+        for b in self.color_buttons.values():
             b.configure(fg_color="transparent")
-        title, icon, colour, spec = _group_of(key)
+        title, icon, color, spec = _group_of(key)
         for k, b in self.buttons.items():
-            b.configure(fg_color=colour if k == key else "transparent")
+            b.configure(fg_color=color if k == key else "transparent")
         if spec:
             _k, kind, _h, _f, label, desc, img_key = spec
-            self.d_title.configure(text=f"{icon}  {label}", text_color=colour)
+            self.d_title.configure(text=f"{icon}  {label}", text_color=color)
             self.d_text.configure(text=desc, text_color="#d7dade")
             img = _calib_image(img_key) or _blank_image()
             try:
@@ -723,18 +765,19 @@ class Calibrator(ctk.CTkToplevel):
                 else "Drag the dot onto the button")
         self.redraw()
 
-    # -- Advanced: per-machine colour capture ------------------------------
-    def select_colour(self, key: str) -> None:
-        """Enter eyedropper mode for the colour element `key`."""
+    # -- Advanced: per-machine color capture ------------------------------
+    def select_color(self, key: str) -> None:
+        """Enter eyedropper mode for the color element `key`."""
         self.sel = None                        # turn off box/dot editing
         self.pick = key
+        self.ztrack_frame.grid_remove()        # not a box selection
         for b in self.buttons.values():
             b.configure(fg_color="transparent")
-        for k, b in self.colour_buttons.items():
-            b.configure(fg_color=COLOUR_ACCENT if k == key else "transparent")
-        label = next((l for k, l, _ in COLOUR_ITEMS if k == key), key)
-        desc = next((d for k, _, d in COLOUR_ITEMS if k == key), "")
-        self.d_title.configure(text=f"🎨  {label}", text_color=COLOUR_ACCENT)
+        for k, b in self.color_buttons.items():
+            b.configure(fg_color=COLOR_ACCENT if k == key else "transparent")
+        label = next((l for k, l, _ in COLOR_ITEMS if k == key), key)
+        desc = next((d for k, _, d in COLOR_ITEMS if k == key), "")
+        self.d_title.configure(text=f"🎨  {label}", text_color=COLOR_ACCENT)
         self.d_text.configure(text=desc, text_color="#d7dade")
         # Reference PNG placeholder, same slot the box/dot items use: drop
         # assets/gui/calib/<key>.png (track/chest/progress/zone/fish) to show
@@ -751,14 +794,14 @@ class Calibrator(ctk.CTkToplevel):
                      "to frame it. Green box = where the saved template matches.")
         else:
             self.hint.configure(
-                text="Click the element on the screenshot to sample its colour. "
+                text="Click the element on the screenshot to sample its color. "
                      "Magenta shows everywhere the bot would then match it.")
-        self.colour_frame.grid()
-        self._refresh_colour_ui()
+        self.color_frame.grid()
+        self._refresh_color_ui()
         self.redraw()
 
-    def _sample_colour(self, ev) -> None:
-        """Read the colour under the click and store it for the picked element."""
+    def _sample_color(self, ev) -> None:
+        """Read the color under the click and store it for the picked element."""
         if np is None or self._shot is None or not self.pick or self.scale <= 0:
             return
         arr = np.asarray(self._shot)               # RGB, H x W x 3
@@ -768,7 +811,7 @@ class Calibrator(ctk.CTkToplevel):
         if self.pick == "fish_tpl":                # centre for the template crop
             self._tpl_center = (max(0, min(w - 1, gx)), max(0, min(h - 1, gy)))
             self._save_template()
-            self._refresh_colour_ui()
+            self._refresh_color_ui()
             self.redraw()
             return
         gx = max(2, min(w - 3, gx))
@@ -778,7 +821,7 @@ class Calibrator(ctk.CTkToplevel):
         bgr = (int(rgb[2]), int(rgb[1]), int(rgb[0]))    # detectors work in BGR
         setattr(self.cfg.colors, f"cap_{self.pick}_bgr", bgr)
         setattr(self.cfg.colors, f"cap_{self.pick}_on", True)
-        self._refresh_colour_ui()
+        self._refresh_color_ui()
         self.redraw()
 
     def _on_tol(self, v) -> None:
@@ -795,30 +838,30 @@ class Calibrator(ctk.CTkToplevel):
         self.tol_val.configure(text=str(int(float(v))))
         self.redraw()
 
-    def _reset_colour(self) -> None:
+    def _reset_color(self) -> None:
         if not self.pick:
             return
         if self.pick == "fish_tpl":
             self.cfg.detection.fish_tpl_on = False
             self._tpl_center = None
-            self._refresh_colour_ui()
-            self.hint.configure(text="Template off — the bot uses colour only. "
+            self._refresh_color_ui()
+            self.hint.configure(text="Template off — the bot uses color only. "
                                      "Click the fish to capture again.")
             self.redraw()
             return
         setattr(self.cfg.colors, f"cap_{self.pick}_on", False)
-        self._refresh_colour_ui()
-        self.hint.configure(text="Reset — back to the built-in colour. Click the "
+        self._refresh_color_ui()
+        self.hint.configure(text="Reset — back to the built-in color. Click the "
                                  "element to capture your own again.")
         self.redraw()
 
-    def _refresh_colour_ui(self) -> None:
+    def _refresh_color_ui(self) -> None:
         """Sync the swatch, tolerance slider and caption to the stored values."""
         if not self.pick:
             return
         if self.pick == "fish_tpl":
             on = self.cfg.detection.fish_tpl_on
-            self.swatch.configure(fg_color=COLOUR_ACCENT if on else "#000000")
+            self.swatch.configure(fg_color=COLOR_ACCENT if on else "#000000")
             self.swatch_txt.configure(
                 text=("template saved — active (green box below = where it "
                       "matches now)") if on else
@@ -840,19 +883,19 @@ class Calibrator(ctk.CTkToplevel):
         else:
             self.swatch.configure(fg_color="#000000")
             self.swatch_txt.configure(
-                text="using the built-in colour — click the element to capture "
+                text="using the built-in color — click the element to capture "
                      "your own", text_color=MUTED)
         self.tol_slider.set(tol)
         self.tol_val.configure(text=str(int(tol)))
 
     def _preview_tk(self):
         """Screenshot with the picked element's matched pixels tinted magenta."""
-        if np is None or self._shot is None or self.pick not in COLOUR_MASK:
+        if np is None or self._shot is None or self.pick not in COLOR_MASK:
             return None
         try:
             rgb = np.asarray(self._shot).copy()          # RGB
-            mask = COLOUR_MASK[self.pick](rgb[:, :, ::-1], self.cfg.colors)
-            tint = np.array([236, 72, 249], np.uint8)    # COLOUR_ACCENT in RGB
+            mask = COLOR_MASK[self.pick](rgb[:, :, ::-1], self.cfg.colors)
+            tint = np.array([236, 72, 249], np.uint8)    # COLOR_ACCENT in RGB
             rgb[mask] = (rgb[mask] // 2 + tint // 2)      # blend so shape shows
             prev = Image.fromarray(rgb)
             size = (max(1, int(prev.width * self.scale)),
@@ -865,8 +908,8 @@ class Calibrator(ctk.CTkToplevel):
 
     # -- dragging (selected item only) -------------------------------------
     def _down(self, ev) -> None:
-        if self.pick:                     # Advanced-colour eyedropper mode
-            self._sample_colour(ev)
+        if self.pick:                     # Advanced-color eyedropper mode
+            self._sample_color(ev)
             return
         if not self.sel or self.sel not in self.shapes:
             return
@@ -973,6 +1016,163 @@ class Calibrator(ctk.CTkToplevel):
         self.hint.configure(text="✔  Saved to config.json", text_color=ACCENT)
         self.after(2500, lambda: self.hint.configure(text_color=MUTED))
         self.redraw()
+
+
+# --------------------------------------------------------------------------
+# Advanced cooldowns editor
+# --------------------------------------------------------------------------
+
+class CooldownEditor(ctk.CTkToplevel):
+    """Edit every delay / reaction time, grouped, with each value's default
+    beside it. Save writes ONLY the values changed from default (config.py keeps
+    the rest tracking the code), so this can't freeze the app on old numbers."""
+
+    COL_ACCENT = "#f0b23a"          # amber, distinct from the pink color panel
+
+    def __init__(self, master, cfg) -> None:
+        super().__init__(master)
+        self.cfg = cfg
+        self.title("Advanced cooldowns")
+        self.geometry("640x720")
+        self.minsize(560, 480)
+        self.configure(fg_color="#141618")
+        self.rows: dict = {}        # (section, field) -> (StringVar, default, is_int, dot)
+
+        head = ctk.CTkFrame(self, fg_color="transparent")
+        head.pack(fill="x", padx=18, pady=(16, 4))
+        ctk.CTkLabel(head, text="Advanced cooldowns",
+                     font=ctk.CTkFont(size=22, weight="bold")).pack(anchor="w")
+        ctk.CTkLabel(head, text="Every delay, timeout and reaction rate the bot "
+                     "uses, in seconds unless noted. Change a value and press "
+                     "Save — only what you change is written; everything else "
+                     "keeps following the app's own updates. ↺ resets one row.",
+                     font=ctk.CTkFont(size=12), text_color=MUTED, anchor="w",
+                     justify="left", wraplength=580).pack(anchor="w", pady=(2, 0))
+
+        body = ctk.CTkScrollableFrame(self, fg_color="transparent")
+        body.pack(fill="both", expand=True, padx=12, pady=8)
+        body.grid_columnconfigure(0, weight=1)
+        r = 0
+        # column header
+        hdr = ctk.CTkFrame(body, fg_color="transparent")
+        hdr.grid(row=r, column=0, sticky="ew", pady=(0, 2)); r += 1
+        hdr.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(hdr, text="COOLDOWN", font=ctk.CTkFont(size=11, weight="bold"),
+                     text_color=MUTED, anchor="w").grid(row=0, column=0, sticky="w", padx=(10, 0))
+        ctk.CTkLabel(hdr, text="VALUE", font=ctk.CTkFont(size=11, weight="bold"),
+                     text_color=MUTED, width=90).grid(row=0, column=1, padx=6)
+        ctk.CTkLabel(hdr, text="DEFAULT", font=ctk.CTkFont(size=11, weight="bold"),
+                     text_color=MUTED, width=96).grid(row=0, column=2, padx=6)
+        ctk.CTkLabel(hdr, text="", width=34).grid(row=0, column=3)
+
+        defaults = type(cfg)()
+        for group, items in COOLDOWNS:
+            sec = ctk.CTkLabel(body, text=group.upper(),
+                               font=ctk.CTkFont(size=12, weight="bold"),
+                               text_color=self.COL_ACCENT, anchor="w")
+            sec.grid(row=r, column=0, sticky="ew", padx=10, pady=(12, 2)); r += 1
+            for i, (section, field, label, unit) in enumerate(items):
+                cur = getattr(getattr(cfg, section), field)
+                dflt = getattr(getattr(defaults, section), field)
+                is_int = isinstance(dflt, int) and not isinstance(dflt, bool)
+                row = ctk.CTkFrame(body, fg_color="#1d1f22" if i % 2 else "#191b1e",
+                                   corner_radius=8)
+                row.grid(row=r, column=0, sticky="ew", pady=1); r += 1
+                row.grid_columnconfigure(0, weight=1)
+                dot = ctk.CTkLabel(row, text="", width=10, text_color=self.COL_ACCENT,
+                                   font=ctk.CTkFont(size=15))
+                dot.grid(row=0, column=0, sticky="w", padx=(6, 0))
+                name = f"{label}" + (f"  ({unit})" if unit not in ("s", "×") else "")
+                ctk.CTkLabel(row, text=name, anchor="w", justify="left",
+                             font=ctk.CTkFont(size=13), wraplength=300).grid(
+                    row=0, column=0, sticky="w", padx=(22, 4), pady=6)
+                var = ctk.StringVar(value=self._fmt(cur, is_int))
+                ent = ctk.CTkEntry(row, textvariable=var, width=84, justify="center")
+                ent.grid(row=0, column=1, padx=6, pady=6)
+                var.trace_add("write", lambda *a, k=(section, field): self._mark(k))
+                ctk.CTkLabel(row, text=self._fmt(dflt, is_int) + (f" {unit}" if unit == "s" else ""),
+                             width=96, text_color=MUTED,
+                             font=ctk.CTkFont(size=12)).grid(row=0, column=2, padx=6)
+                ctk.CTkButton(row, text="↺", width=30, height=26,
+                              fg_color="#33383e", hover_color="#434952",
+                              command=lambda k=(section, field): self._reset_one(k)).grid(
+                    row=0, column=3, padx=(0, 8))
+                self.rows[(section, field)] = (var, dflt, is_int, dot)
+
+        foot = ctk.CTkFrame(self, fg_color="transparent")
+        foot.pack(fill="x", padx=18, pady=(4, 16))
+        self.msg = ctk.CTkLabel(foot, text="", text_color=MUTED,
+                                font=ctk.CTkFont(size=12))
+        self.msg.pack(side="left")
+        ctk.CTkButton(foot, text="Save", width=110, height=38, fg_color=ACCENT,
+                      hover_color="#268a5f", font=ctk.CTkFont(size=14, weight="bold"),
+                      command=self._save).pack(side="right")
+        ctk.CTkButton(foot, text="Reset all", width=90, height=38,
+                      fg_color="#33383e", hover_color="#434952",
+                      command=self._reset_all).pack(side="right", padx=(0, 8))
+        for k in self.rows:
+            self._mark(k)
+        self.after(60, self.lift)
+
+    @staticmethod
+    def _fmt(v, is_int: bool) -> str:
+        return str(int(v)) if is_int else f"{float(v):g}"
+
+    def _mark(self, key) -> None:
+        """Show an accent dot next to a row whose value differs from default."""
+        var, dflt, is_int, dot = self.rows[key]
+        try:
+            changed = self._parse(var.get(), is_int) != dflt
+        except ValueError:
+            changed = True                      # invalid: flag it too
+        dot.configure(text="●" if changed else "")
+
+    @staticmethod
+    def _parse(text: str, is_int: bool):
+        text = text.strip()
+        if text == "":
+            raise ValueError("empty")
+        return int(round(float(text))) if is_int else float(text)
+
+    def _reset_one(self, key) -> None:
+        var, dflt, is_int, _dot = self.rows[key]
+        var.set(self._fmt(dflt, is_int))
+
+    def _reset_all(self) -> None:
+        for key in self.rows:
+            self._reset_one(key)
+        self.msg.configure(text="All reset to defaults — press Save to apply.",
+                           text_color=MUTED)
+
+    def _save(self) -> None:
+        bad = []
+        parsed = {}
+        for key, (var, dflt, is_int, _dot) in self.rows.items():
+            try:
+                v = self._parse(var.get(), is_int)
+                if v < 0:                       # every cooldown is a duration/rate
+                    raise ValueError("negative")
+                parsed[key] = v
+            except ValueError:
+                bad.append(key)
+        if bad:
+            first = bad[0]
+            self.msg.configure(
+                text=f"{first[1]}: enter a non-negative number.",
+                text_color="#ef476f")
+            return
+        for (section, field), v in parsed.items():
+            setattr(getattr(self.cfg, section), field, v)
+        try:
+            self.cfg.save()
+        except Exception as exc:                       # noqa: BLE001
+            self.msg.configure(text=f"Save failed: {exc}", text_color="#ef476f")
+            return
+        n = sum(1 for k, (var, dflt, is_int, _d) in self.rows.items()
+                if parsed[k] != dflt)
+        self.msg.configure(
+            text=f"✔ Saved to config.json ({n} changed from default).",
+            text_color=ACCENT)
 
 
 # --------------------------------------------------------------------------
@@ -1089,6 +1289,18 @@ class App(ctk.CTk):
                       font=ctk.CTkFont(size=13)).pack(anchor="w")
         add(c)
 
+        # 8. advanced cooldowns
+        c = Card(body, "Advanced cooldowns",
+                 "Fine-tune every delay, timeout and reaction rate the bot uses "
+                 "— casting, biting, reeling, the catch, and talking to the NPC. "
+                 "Each shows its default; only what you change is saved, so the "
+                 "rest keep following app updates. For power users; the defaults "
+                 "are fine for most.", "cooldowns")
+        ctk.CTkButton(c.body, text="⚙  Open cooldown editor", height=36,
+                      fg_color="#3a3f45", hover_color="#4a5057",
+                      command=self._cooldowns).pack(anchor="w")
+        add(c)
+
         foot = ctk.CTkFrame(self, fg_color="transparent")
         foot.pack(fill="x", padx=20, pady=(4, 18))
         self.err = ctk.CTkLabel(foot, text="", text_color="#ef476f")
@@ -1108,6 +1320,15 @@ class App(ctk.CTk):
             win.focus_force()
             return
         self._calib = Calibrator(self, self.cfg)
+
+    def _cooldowns(self) -> None:
+        win = getattr(self, "_cdedit", None)
+        if win is not None and win.winfo_exists():
+            win.deiconify()
+            win.lift()
+            win.focus_force()
+            return
+        self._cdedit = CooldownEditor(self, self.cfg)
 
     def _apply_form(self) -> None:
         # A quick double-click on Continue fires this twice; the first call

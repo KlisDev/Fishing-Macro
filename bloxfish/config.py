@@ -16,17 +16,17 @@ CONFIG_PATH = ROOT / "config.json"
 
 # Printed at startup. Bump this on every release: the fastest way to waste an
 # afternoon is debugging a bug report from a build that already has the fix.
-VERSION = "1.4.0"
+VERSION = "1.6.0"
 
 
 @dataclass
 class Colors:
-    """Colour predicates for the reel bar.
+    """Color predicates for the reel bar.
 
-    These are *relational* rather than "reference colour +/- tolerance" on
+    These are *relational* rather than "reference color +/- tolerance" on
     purpose. When the fish leaves the zone the game plays an alarm animation:
     the green zone desaturates all the way to (70,86,71) and the fish tile
-    shifts from teal (133,153,16) to blue (142,95,24). A fixed-colour match
+    shifts from teal (133,153,16) to blue (142,95,24). A fixed-color match
     goes blind for ~0.3 s exactly when the bot most needs to see. The
     relations below hold through the whole animation (verified frame by frame
     over the flash at frames 2985-3025 of the reference recording).
@@ -87,22 +87,22 @@ class Colors:
     bite_sat_min: int = 45
     bite_val_min: int = 110
 
-    # --- per-machine colour capture (Calibrate -> Advanced) ---------------
+    # --- per-machine color capture (Calibrate -> Advanced) ---------------
     # The predicates above are relational on purpose, so they survive the
     # mid-fight animations and travel between machines. But the *anchors* were
     # measured on one screen, and a different GPU/settings renders them a little
     # differently (measured: a tester's track was (24,32,32) where the author's
     # is (34,34,34)). These let a user pin the anchor to THEIR screen.
     #
-    # Two behaviours by element:
-    #   * Stable-coloured (track, chest, progress): the capture REPLACES the
-    #     relational mask -- a single colour +/- tol is enough for something that
-    #     does not change colour.
-    #   * Zone and fish, which DO change colour mid-fight: the capture is UNIONED
-    #     with the relational mask (see vision.zone_mask_tracking / fish_mask),
-    #     so it can only ADD the captured colour and never removes the green-OR-
-    #     grey / teal-OR-blue handling. The catastrophic mid-fight loss therefore
-    #     stays impossible even from a bad capture.
+    # EVERY capture is UNIONED with the relational mask, never a replacement
+    # (track/chest/progress + zone/fish alike -- see vision.py). It can only ADD
+    # the captured color; the relational default keeps working underneath. That
+    # is deliberate and load-bearing: an earlier build let the static elements
+    # REPLACE their mask, and one bad track sample (captured as (95,85,91)) then
+    # zeroed track detection and blinded the bot to a bar plainly on screen --
+    # "bar never appeared". Unioned, the worst a bad capture can do is add stray
+    # pixels; it can never blank detection, and the zone's green-OR-grey /
+    # fish's teal-OR-blue mid-fight handling can never be lost.
     #
     # Each is OPT-IN: `cap_<elem>_on` defaults False, so an un-captured install
     # detects exactly as before and still tracks code updates (no frozen-config
@@ -119,7 +119,7 @@ class Colors:
     cap_progress_bgr: tuple = (52, 210, 90)
     cap_progress_tol: int = 55
     # Zone and fish each have TWO states -- in-zone vs out-of-zone -- that render
-    # different colours (the zone greens when the fish is inside it and greys
+    # different colors (the zone greens when the fish is inside it and greys
     # `(89,89,89)` when it escapes; the fish tile likewise). `cap_<e>_*` is the
     # IN state, `cap_<e>_out_*` the OUT state; both are UNIONED with the
     # relational mask, so they can only broaden it -- the built-in green/grey and
@@ -254,7 +254,7 @@ class Detection:
     # bar lives at the edges of this box, not near the bar. The health and
     # energy bars on the left are green and wide; the Power/Mastery bars on the
     # right are a two-tone strip much like the progress strip. Excluding them
-    # outright is stronger than any colour rule that has to tell them apart.
+    # outright is stronger than any color rule that has to tell them apart.
     bar_search_top: float = 0.45
     bar_search_bottom: float = 0.98
     bar_search_left: float = 0.0
@@ -283,6 +283,29 @@ class Detection:
     # beneath, zone inside) is what actually identifies the bar.
     bar_min_width_frac: float = 0.18
     bar_max_width_frac: float = 0.99
+
+    # Optional "zone track" box (Calibrate -> Fishing -> Zone track). Off by
+    # default. When on, the reel loop finds and reads the bar from THIS tighter
+    # region instead of the wide reel bar band, which (a) pins the track width --
+    # the wide band re-measures the progress strip every acquisition and that
+    # measurement swings badly (observed 1117..1763 px on one 4K clip), and
+    # `track_w` is locked once per reel, so a short read mis-scales every target
+    # for the whole fight -- and (b) keeps out-of-bar scenery (dock floor at
+    # night, water) out of the picture. The reel bar band stays the wider
+    # presence check. Defaults mirror `bar_search` so toggling on before
+    # calibrating degrades to today's region rather than breaking.
+    zone_track_on: bool = False
+    zone_track_top: float = 0.45
+    zone_track_bottom: float = 0.98
+    zone_track_left: float = 0.0
+    zone_track_right: float = 1.0
+    # Width lock. The progress strip is only ever *occluded* (by the fish/chest
+    # tile), never drawn wider than the true track, so the widest read over a few
+    # frames is the true width. At reel start, sample the finder this many frames
+    # and keep the widest -- turning a single unlucky clipped acquisition, which
+    # would mis-scale the whole reel, into a non-event. Tuning constant, so it
+    # stays in code (not user_fields); applies with or without the box.
+    bar_lock_frames: int = 5
 
     # Bite marker search window, as fractions of the game window. A tight box
     # around where the '!' rides above the character. This deliberately excludes
@@ -368,8 +391,8 @@ class Detection:
     meter_min_score_frac: float = 0.05   # of window height (~52 px @1080, 108 @2160)
 
     # Fish template fallback (Calibrate -> Advanced -> "Fish image"). When the
-    # colour masks can't find the fish (a machine whose tile renders an odd
-    # colour), match a saved picture of the fish by shape instead -- colour
+    # color masks can't find the fish (a machine whose tile renders an odd
+    # color), match a saved picture of the fish by shape instead -- color
     # independent. `fish_template.png` sits next to config.json; the engine
     # loads it once. Only used as a fallback, so the common path stays cheap.
     fish_tpl_on: bool = False
@@ -453,7 +476,7 @@ class Chest:
     not move, and after collection it stays on the bar with an open-chest icon,
     so the engine holds a *remembered* position for a fixed time and marks it
     done rather than trying to read the collect animation (the tile whitens
-    while collecting, which would defeat a colour test at exactly the wrong
+    while collecting, which would defeat a color test at exactly the wrong
     moment).
     """
 
@@ -534,6 +557,12 @@ class Shop:
     # two: long enough for the next page to render, short enough not to pay for
     # a close that Back was never going to do.
     after_back: float = 0.5
+    # Settle before the FIRST exit click. The craft window closing snaps the
+    # dialogue back to the main menu, and 'Nevermind' is the last entry to
+    # render; clicking into that half-drawn menu misses and the bot visibly
+    # stabs at it a few times. A short wait lets the menu finish first. (Exposed
+    # in Advanced cooldowns as "Before clicking Nevermind".)
+    before_leave: float = 0.7
 
     # Waits, in seconds (measured: menu swaps ~0.5 s).
     after_click: float = 0.6
@@ -562,6 +591,78 @@ class Shop:
     enter_stance_on_start: bool = True
 
 
+# --- Advanced cooldowns (the GUI editor) ---------------------------------
+# The delays/timeouts/rates a user may tune from the "Advanced cooldowns" window.
+# Grouped for the UI; every entry is (section, field, label, unit). `section` is
+# the Config attribute holding the dataclass, `field` the value on it.
+#
+# These are TUNING CONSTANTS, so they are NOT in `user_fields`: an un-edited
+# install must keep tracking code updates (the frozen-config trap). Persistence
+# is handled specially instead -- `save()` writes a cooldown ONLY when the user
+# has changed it from its default, and `load()` applies any that are present
+# (see COOLDOWN_PATHS below). So untouched values still follow the code; a value
+# the user deliberately changed sticks until they Reset it.
+COOLDOWNS: list = [
+    ("Casting", [
+        ("timing", "cast_hold", "Hold to charge a cast", "s"),
+        ("timing", "cast_settle", "After cast, before watching for a bite", "s"),
+        ("timing", "cast_retry_gap", "Between cast attempts", "s"),
+        ("timing", "max_cast_attempts", "Max cast attempts", "×"),
+    ]),
+    ("Bite", [
+        ("timing", "bite_click_delay", "Reaction padding before clicking the !", "s"),
+        ("timing", "bite_to_bar_timeout", "Bite → reel bar appears (give up)", "s"),
+        ("timing", "max_wait_for_bite", "Give up waiting for a bite after", "s"),
+        ("timing", "scan_hz", "Screen scan rate", "Hz"),
+        ("timing", "fast_bite_scan_hz", "Fast-bite scan rate", "Hz"),
+    ]),
+    ("Reel", [
+        ("timing", "latency", "Input + capture latency (control)", "s"),
+        ("timing", "control_hz", "Control rate (0 = as fast as the screen)", "Hz"),
+        ("timing", "max_reel_seconds", "Abandon a reel after", "s"),
+        ("timing", "bar_clear_timeout", "Wait for the bar to clear after a catch", "s"),
+    ]),
+    ("Catch & rod", [
+        ("timing", "catch_confirm_window", "Confirm-catch watch window", "s"),
+        ("timing", "catch_popup_delay", "Bar gone → catch popup", "s"),
+        ("timing", "catch_click_gap", "Between the two dismiss clicks", "s"),
+        ("timing", "catch_settle", "After dismissing the catch", "s"),
+        ("timing", "rod_flick_gap", "Rod flick: between key presses", "s"),
+        ("timing", "rod_flick_slow_delay", "Slow flick: before unequipping", "s"),
+        ("timing", "rod_flick_slow_gap", "Slow flick: unequip → equip", "s"),
+        ("timing", "rod_flick_settle", "After re-equipping the rod", "s"),
+        ("timing", "error_recovery", "Pause after a cycle error", "s"),
+    ]),
+    ("Catch popups", [
+        ("dialog", "clear_timeout", "Wait for the catch popup to clear", "s"),
+        ("dialog", "after_clear", "After clearing the catch popup", "s"),
+        ("dialog", "poll", "Popup re-check interval", "s"),
+    ]),
+    ("Shop / NPC", [
+        ("shop", "before_leave", "Before clicking Nevermind (menu settle)", "s"),
+        ("shop", "after_nevermind", "After leaving the dialogue", "s"),
+        ("shop", "after_back", "Between 'Back' and 'Nevermind'", "s"),
+        ("shop", "after_click", "Between menu button clicks", "s"),
+        ("shop", "after_plus", "Between '+' clicks in Craft", "s"),
+        ("shop", "after_shift", "After a shift-lock toggle", "s"),
+        ("shop", "after_step", "After a step (break-out walk)", "s"),
+        ("shop", "after_rod", "After stowing / drawing the rod", "s"),
+        ("shop", "walk_tap", "Step key hold (break-out walk)", "s"),
+        ("shop", "approach_wait", "After stepping toward the NPC", "s"),
+        ("shop", "dialog_timeout", "Wait for the NPC dialogue to open", "s"),
+        ("shop", "craft_timeout", "Wait for the Craft window", "s"),
+        ("shop", "close_timeout", "Wait for the dialogue to close", "s"),
+        ("shop", "poll", "Shop UI re-check interval", "s"),
+    ]),
+    ("Selling", [
+        ("sell", "after_click", "Between sell-menu clicks", "s"),
+        ("sell", "confirm_timeout", "Wait for the Confirm page / sale", "s"),
+    ]),
+]
+COOLDOWN_PATHS: set = {f"{sec}.{fld}"
+                       for _grp, items in COOLDOWNS for sec, fld, *_ in items}
+
+
 @dataclass
 class Config:
     window_title: str = "Roblox"
@@ -583,7 +684,7 @@ class Config:
     diag: bool = False
     diag_max: int = 40
     # Save the reel strip while things are WORKING, into record/. `--record`.
-    # Unlike diag/ this samples success, which is what colour questions need:
+    # Unlike diag/ this samples success, which is what color questions need:
     # a lossless PNG of the strip settles what a track pixel really is on your
     # machine, where a re-encoded video cannot.
     record: bool = False
@@ -627,7 +728,8 @@ class Config:
         """
         boxes = ["left", "top", "right", "bottom"]
         fields = {"rod_slot", "window_title", "start_stop_key", "quit_key"}
-        fields |= {f"detection.{p}_{s}" for p in ("bar_search", "bite", "meter")
+        fields |= {f"detection.{p}_{s}"
+                   for p in ("bar_search", "bite", "meter", "zone_track")
                    for s in boxes}
         fields |= {f"dialog.{s}" for s in boxes}
         fields |= {f"dialog.learn_{s}" for s in boxes} | {"dialog.learn_click"}
@@ -638,7 +740,7 @@ class Config:
                                          "craft_plus", "craft_button", "craft_close")}
         fields |= {"sell.enabled", "sell.every", "chest.enabled",
                    "timing.slow_rod_flick", "timing.fast_bite"}
-        # Per-machine colour capture (Calibrate -> Advanced). These are user
+        # Per-machine color capture (Calibrate -> Advanced). These are user
         # calibration like the boxes, not tuning constants, so they persist;
         # the `_on` flags default False so an install that never captured keeps
         # tracking code updates.
@@ -647,6 +749,7 @@ class Config:
             fields |= {f"colors.cap_{elem}_on", f"colors.cap_{elem}_bgr",
                        f"colors.cap_{elem}_tol"}
         fields |= {"detection.fish_tpl_on", "detection.fish_tpl_thr"}
+        fields |= {"detection.zone_track_on"}
         return fields
 
     @staticmethod
@@ -667,24 +770,38 @@ class Config:
                 return cfg
             data = json.loads(raw)
             if isinstance(data, dict):
-                _merge(cfg, data, Config.user_fields())
+                # user_fields + any cooldown the user deliberately overrode.
+                _merge(cfg, data, Config.user_fields() | COOLDOWN_PATHS)
         except Exception:                       # noqa: BLE001
             # Keep the broken file for the user to look at; carry on defaulted.
             pass
         return cfg
 
     def save(self, path: Path | None = None) -> None:
-        """Write only the user's own settings. See `user_fields`."""
+        """Write the user's own settings (see `user_fields`), plus any cooldown
+        they changed from its default.
+
+        Cooldowns are tuning constants, so a *default* one is never written --
+        that is what keeps a later code fix reaching people who saved a config.
+        Only a value the user deliberately changed is persisted; Reset returns it
+        to the default and it drops back out of the file on the next save.
+        """
         path = path or CONFIG_PATH
         keep = Config.user_fields()
+        defaults = asdict(Config())
         full = asdict(self)
         out: dict = {}
         for key, value in full.items():
             if key in keep:
                 out[key] = value
             elif isinstance(value, dict):
-                section = {k: v for k, v in value.items()
-                           if f"{key}.{k}" in keep}
+                section = {}
+                for k, v in value.items():
+                    path_k = f"{key}.{k}"
+                    if path_k in keep:
+                        section[k] = v
+                    elif path_k in COOLDOWN_PATHS and v != defaults[key][k]:
+                        section[k] = v          # a changed cooldown override
                 if section:
                     out[key] = section
         path.write_text(json.dumps(out, indent=2), encoding="utf-8")

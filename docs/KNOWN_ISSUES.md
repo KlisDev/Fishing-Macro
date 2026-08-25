@@ -6,7 +6,7 @@ The macro never touches the game. It only *looks at your screen* — the same
 pixels you look at — and moves the mouse. That is what keeps it on the safe
 side of an exploit, but it also means **anything that changes those pixels can
 confuse it**: a cosmetic, a fruit's particles, the time of day, your GPU's
-colours, another window on top. Most of the problems below are not "the program
+colors, another window on top. Most of the problems below are not "the program
 is broken" — they are the screen looking different from what it expects. The
 good news is almost all of them are avoidable once you know what to keep off
 your screen.
@@ -55,7 +55,7 @@ washed out, hide the real one.
   - **Gas** — a purple gaseous aura wraps your whole body ([wiki](https://blox-fruits.fandom.com/wiki/Gas)).
   - **Rumble / Lightning** — an ambient electric glow ([wiki](https://blox-fruits.fandom.com/wiki/Rumble)).
   - **Light, Portal, Spirit, Dragon, Kitsune, Leopard, Dough** and other
-    transformation fruits — bright, coloured effects around the character.
+    transformation fruits — bright, colored effects around the character.
   - **Skull Guitar** and other particle-emitting accessories.
   - Any **skill animation** you leave lingering next to you.
 - **The top-right Player / Bounty list**, if the bite box is calibrated too
@@ -84,19 +84,29 @@ latches onto the wrong thing and reels a phantom.
   - *Too narrow* — it cuts the bar off and mis-measures its width, so the
     controller then aims against the wrong size.
 - **Daytime.** The fishing UI is semi-transparent, so bright water and
-  sun-glare bleed *through* the bar and shift the colours it keys on. **Night
+  sun-glare bleed *through* the bar and shift the colors it keys on. **Night
   is noticeably more reliable.**
-- **Your graphics card / settings render the bar's colours slightly
+- **Your graphics card / settings render the bar's colors slightly
   differently** than the shipped defaults. (Measured: one machine's track is
   `(24,32,32)` where another's is `(34,34,34)`.) If this is you, **Calibrate →
-  🎨 Advanced — colours** lets you click the bar and the chest tile on a
-  screenshot to pin detection to your own screen's colours.
+  🎨 Advanced — colors** lets you click the bar and the chest tile on a
+  screenshot to pin detection to your own screen's colors.
+- **An off color capture** (Advanced — colors). Captures are *additive* now,
+  so a bad one can only slow things down — but on an **older build** a bad
+  reel-bar-track sample *replaced* the default and blinded the bot to a bar
+  plainly on screen (`bar never appeared`). If you see that on an older build,
+  **Reset to default** the captured colors, or update.
+- **A too-tight zone track box.** If you turned the **zone track** box on and
+  drew it so tight it cuts off the thin progress strip beneath the track, the bot
+  can't confirm the bar inside it. The latest build falls back to the Reel bar
+  band and logs a warning; redraw the box a little taller (include the strip) or
+  untick it.
 - **Window size.** Roblox does not scale this UI evenly, so the bar can be
   anywhere from ~27% to ~97% of the window wide depending on your resolution.
 
 **Avoid it:** crop the **Reel bar band** snugly around the bar with a small
 margin on every side — that removes the health bars and the Mastery strip from
-the picture, which is worth more than any colour rule. Fish **at night** if
+the picture, which is worth more than any color rule. Fish **at night** if
 daytime is flaky. **Recalibrate on your own machine** rather than trusting the
 shipped boxes.
 
@@ -132,17 +142,41 @@ the opposite of the reel bar band — do **not** crop it tight.
   overshoot.
 - **Fast, darting fish** are simply harder to hold centred.
 
-There is no calibration for this — it is the nature of the control loop at your
-monitor's refresh rate. It costs almost no catches; it just looks restless.
+The chatter itself has no calibration — it is the nature of the control loop at
+your monitor's refresh rate, and it costs almost no catches; it just looks
+restless. But a **second, fixable** cause looks the same from outside and *does*
+cost precision, worst on small beginner zones:
+
+- **The track width is mis-measured when the catch starts.** The reel aims at
+  every target as a *fraction of the track width*, and the width is read once,
+  at the start of each catch. If a tile happened to be covering the edge of the
+  progress strip at that instant, the width comes back short and the whole fight
+  is scaled wrong. Measured on one 4K recording, re-reading each frame, the width
+  swung between **1117 and 1763 px**. This release now reads the width over the
+  first few frames and **keeps the widest** (the strip is only ever covered up,
+  never drawn wider than it really is), so a single short read no longer skews
+  the fight. Turning on the **zone track** box (Calibrate → 🎣 Fishing) removes
+  the scenery that causes the short reads in the first place, and is the fix if
+  imprecision persists — especially at night, when it also keeps the dock floor
+  and water out of shot.
 
 ---
 
 ## 5. Chests get missed
 
 - **Chest detection was tuned from screenshots, not extensive play**, so it can
-  miss a chest or occasionally react to a warm-coloured tile.
+  miss a chest or occasionally react to a warm-colored tile. On one tester's
+  80-second recording the default detector saw **zero** chests — its tile
+  rendered a color the default did not match. **Fix:** in **Calibrate → 🎨
+  Advanced — colors**, capture **Treasure chest tile** to pin it to your screen.
 - A chest **far across the track** takes time for the zone to reach; a very
   hard fish during that detour can slip.
+- **After collecting a chest the zone can slide to one side instead of
+  re-centring on the fish** (reported, not yet reproduced here — the clip we had
+  detected no chests, see above). If you hit this, first capture the chest tile
+  color as above so the chest is actually seen, then send a recording made with
+  `python run.py --dev` of a catch that has a chest in it, so it can be fixed
+  from what the bot actually sampled.
 
 ---
 
