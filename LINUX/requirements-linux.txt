@@ -1,0 +1,18 @@
+# Linux (Sober / X11) dependencies. Install with:
+#   pip install -r requirements-linux.txt
+#
+# Shared with the Windows build (the whole detection/control core):
+mss>=9.0
+numpy>=1.24
+opencv-python>=4.8
+pillow>=10.0
+
+# Linux input + window backend (LINUX/):
+evdev>=1.6            # uinput virtual mouse/keyboard
+python-xlib>=0.33     # locate the Sober window, read cursor position
+pynput>=1.7           # F2/F4 global hotkeys on X11
+
+# GUI (easy_run_linux.py) — the full setup wizard, calibrate, colour eyedropper,
+# zone-track box, and cooldowns editor. On Linux you also need Tk installed at
+# the system level, e.g.  sudo apt install python3-tk
+customtkinter>=5.2

@@ -17,6 +17,7 @@ leaves the button up.
 from __future__ import annotations
 
 import ctypes
+import sys
 import time
 from ctypes import wintypes
 
@@ -87,7 +88,11 @@ class _INPUT(ctypes.Structure):
     _fields_ = [("type", wintypes.DWORD), ("u", _U)]
 
 
-_user32 = ctypes.WinDLL("user32", use_last_error=True)
+# Windows-only: WinDLL exists only on Windows, and binding it at import would
+# crash the whole package on Linux/macOS. The Windows Mouse/Keyboard below use
+# it; other platforms substitute their own backend (see LINUX/inputs_linux.py)
+# and never touch these helpers. Gate the bind so the module still imports.
+_user32 = ctypes.WinDLL("user32", use_last_error=True) if sys.platform == "win32" else None
 
 
 def _send(flags: int, dx: int = 0, dy: int = 0) -> None:

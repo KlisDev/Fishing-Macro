@@ -17,6 +17,7 @@ app works with no images at all.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import threading
@@ -49,6 +50,11 @@ IMAGES = {
 
 def _boot() -> None:
     """Get the dependencies in place before anything imports them."""
+    # A platform launcher can manage its own dependencies and skip this — the
+    # Linux entry (LINUX/easy_run_linux.py) installs from requirements-linux.txt
+    # and sets this, so the Windows-oriented check never runs there.
+    if os.environ.get("BLOXFISH_NO_BOOT"):
+        return
     ensure_requirements()
     try:
         import customtkinter  # noqa: F401
@@ -1458,11 +1464,6 @@ class App(ctk.CTk):
             pass
 
     def _bind_hotkeys(self) -> None:
-        try:
-            import keyboard
-        except Exception:                          # noqa: BLE001
-            self._log("`keyboard` not available — use the button.")
-            return
         last = [0.0]
 
         def toggle() -> None:
@@ -1472,16 +1473,34 @@ class App(ctk.CTk):
             last[0] = now
             self._toggle()
 
-        # `keyboard` needs administrator rights on Windows for a global hook.
-        # Without them add_hotkey raises — which must not take the window down,
-        # since the on-screen button does the same job.
+        def quit_key():
+            self.after(0, self._close)
+
+        # Windows: the `keyboard` library. It needs administrator rights for a
+        # global hook; without them add_hotkey raises — which must not take the
+        # window down, since the on-screen button does the same job.
+        if sys.platform == "win32":
+            try:
+                import keyboard
+                keyboard.add_hotkey(self.cfg.start_stop_key, toggle)
+                keyboard.add_hotkey(self.cfg.quit_key, quit_key)
+            except Exception as exc:                   # noqa: BLE001
+                self._log(f"Hotkeys unavailable ({exc}) — use the button "
+                          f"instead. Run as administrator if you want F2/F4.")
+            return
+
+        # Linux/macOS: pynput global hotkeys (X11). Falls back to the button.
         try:
-            keyboard.add_hotkey(self.cfg.start_stop_key, toggle)
-            keyboard.add_hotkey(self.cfg.quit_key,
-                                lambda: self.after(0, self._close))
+            from pynput import keyboard as pk
+            hk = pk.GlobalHotKeys({
+                f"<{self.cfg.start_stop_key.lower()}>": toggle,
+                f"<{self.cfg.quit_key.lower()}>": quit_key,
+            })
+            hk.daemon = True
+            hk.start()
+            self._hotkeys = hk                         # keep a ref so it lives on
         except Exception as exc:                       # noqa: BLE001
-            self._log(f"Hotkeys unavailable ({exc}) — use the button instead. "
-                      f"Run as administrator if you want F2/F4.")
+            self._log(f"Hotkeys unavailable ({exc}) — use the button instead.")
 
     def _toggle(self) -> None:
         eng = self.engine

@@ -1,0 +1,4 @@
+# Let members of the "input" group use /dev/uinput, so the fishing macro can
+# inject mouse/keyboard events without running the whole program as root.
+# Installed to /etc/udev/rules.d/ by install-udev.sh.
+KERNEL=="uinput", GROUP="input", MODE="0660", OPTIONS+="static_node=uinput"

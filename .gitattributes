@@ -1,0 +1,3 @@
+# Keep shell scripts LF so they run on Linux even when committed from Windows
+# (a CRLF in the shebang line breaks `#!/usr/bin/env bash`).
+*.sh text eol=lf
