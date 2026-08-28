@@ -13,9 +13,10 @@ Everything you need on Windows. Download this repository (green **Code** button 
 **Download ZIP**), unzip it, then open the **`Windows`** folder and:
 
 - double-click **`easy_run.py`**, or
-- for the reliable path, **right-click `Run as Admin.bat` → *Run as
-  administrator*** (why: if Roblox is elevated and the macro isn't, Windows drops
-  its input and the bar drifts off and gives up).
+- for the reliable path, run it **as administrator** — right-click
+  **`easy_run.py` → *Run as administrator*** (or open an admin terminal and run
+  `python easy_run.py`). Why: if Roblox is elevated and the macro isn't, Windows
+  drops its input and the bar drifts off and gives up.
 
 Full setup, calibration, options, and troubleshooting are in
 **[`WINDOWS/README.md`](WINDOWS/README.md)**.
@@ -23,8 +24,8 @@ Full setup, calibration, options, and troubleshooting are in
 > **If your browser or antivirus warns about the download — it's a false
 > positive.** To play the minigame the macro sends mouse/keyboard input and reads
 > the screen, the same behaviour a keylogger has, so heuristic scanners sometimes
-> flag it. There are **no binaries here — only readable Python** and a plain
-> launcher script. See `WINDOWS/README.md` for details.
+> flag it. There are **no binaries and no scripts here — only readable Python**
+> you can inspect line by line. See `WINDOWS/README.md` for details.
 
 ## 🐧 [`LINUX/`](LINUX/README_LINUX.md) — experimental (Sober)
 

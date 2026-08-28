@@ -55,9 +55,19 @@ def _install_hotkeys(cfg, start, stop, quitting):
     def key(name):
         return f"<{name.lower()}>"
 
+    def toggle_debug():
+        # Log only (no window to host an overlay in terminal mode).
+        from bloxfish.debug import DEBUG
+        if DEBUG.enabled:
+            p = DEBUG.disarm()
+            print(f"[debug] OFF — saved {p}" if p else "[debug] OFF")
+        else:
+            print(f"[debug] ON (log) — writing {DEBUG.arm()}")
+
     try:
         hk = pk.GlobalHotKeys({key(cfg.start_stop_key): toggle,
-                               key(cfg.quit_key): quitting.set})
+                               key(cfg.quit_key): quitting.set,
+                               "<f8>": toggle_debug})
         hk.daemon = True
         hk.start()
         return True

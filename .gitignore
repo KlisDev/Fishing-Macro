@@ -20,3 +20,6 @@ record/
 # --dev capture folders and the per-machine fish template
 capture_*/
 fish_template.png
+
+# F8 diagnostic session logs
+diag_session_*.log

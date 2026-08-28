@@ -223,12 +223,23 @@ def main() -> int:
             else:
                 start()
 
+        def toggle_debug() -> None:
+            # Terminal mode has no window to host the overlay, so this is the
+            # diagnostic LOG only (the GUI, easy_run.py, adds the visual overlay).
+            from bloxfish.debug import DEBUG
+            if DEBUG.enabled:
+                p = DEBUG.disarm()
+                print(f"[debug] OFF — saved {p}" if p else "[debug] OFF")
+            else:
+                print(f"[debug] ON (log) — writing {DEBUG.arm()}")
+
         # A global hook needs admin on Windows; without it this raises. Fall
         # back to starting straight away rather than sitting on a hotkey that
         # will never fire.
         try:
             keyboard.add_hotkey(cfg.start_stop_key, toggle)
             keyboard.add_hotkey(cfg.quit_key, quitting.set)
+            keyboard.add_hotkey("f8", toggle_debug)
         except Exception as exc:                       # noqa: BLE001
             print(f"hotkeys unavailable ({exc}) — starting now, Ctrl+C to quit")
             keyboard = None

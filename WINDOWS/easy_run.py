@@ -95,7 +95,36 @@ BG_CARD = "#1d1f22"
 MUTED = "#9aa0a6"
 
 
-def load_image(key: str, width: int = 320):
+def speed_scroll(frame, factor: int = 4) -> None:
+    """Make a CTkScrollableFrame's mouse wheel scroll `factor`x faster.
+
+    CTk binds its own wheel handler at init, so rather than fight it we add an
+    *extra* scroll on top — but only while the pointer is actually over this
+    frame, so it doesn't hijack scrolling elsewhere (e.g. the cooldown editor).
+    """
+    canvas = getattr(frame, "_parent_canvas", None)
+    if canvas is None:
+        return
+
+    def _on_wheel(event):
+        try:
+            w = frame.winfo_containing(event.x_root, event.y_root)
+        except Exception:                              # noqa: BLE001
+            return
+        while w is not None:
+            if w is frame:
+                step = 1 if event.delta > 0 else -1
+                canvas.yview_scroll(-factor * step, "units")
+                break
+            w = getattr(w, "master", None)
+
+    try:
+        frame.bind_all("<MouseWheel>", _on_wheel, add=True)
+    except Exception:                                  # noqa: BLE001
+        pass
+
+
+def load_image(key: str, width: int = 220):
     """CTkImage for a card, or None if the PNG has not been added."""
     if Image is None:
         return None
@@ -215,13 +244,13 @@ CALIB_GROUPS = [
          "while you are stood at the NPC.", "center"),
         ("menu_item1", "dot", "shop", ("menu_item1",), "Top menu button",
          "Drop the dot on the TOP button in the stack. The bot presses it for "
-         "“Shop”, “Buy Bait”, “Basic Bait” and “Confirm”.", "menu"),
+         "“Shop”, “Buy Bait”, “Basic Bait” and “Confirm”.", "menu_item1"),
         ("menu_item2", "dot", "shop", ("menu_item2",), "2nd menu button",
          "Drop the dot on the SECOND button down. Used only for “Sell Fish”.",
-         "menu"),
+         "menu_item2"),
         ("menu_last", "dot", "shop", ("menu_last",), "Bottom menu button",
          "Drop the dot on the BOTTOM button. The bot presses it for “Back” and "
-         "then “Nevermind” to leave the dialogue.", "menu"),
+         "then “Nevermind” to leave the dialogue.", "menu_last"),
     ]),
     ("Buying bait", "🪙", "#c084fc", [
         ("craft_btn", "box", "shop",
@@ -1057,6 +1086,7 @@ class CooldownEditor(ctk.CTkToplevel):
 
         body = ctk.CTkScrollableFrame(self, fg_color="transparent")
         body.pack(fill="both", expand=True, padx=12, pady=8)
+        speed_scroll(body)
         body.grid_columnconfigure(0, weight=1)
         r = 0
         # column header
@@ -1212,6 +1242,7 @@ class App(ctk.CTk):
 
         body = ctk.CTkScrollableFrame(self, fg_color="transparent")
         body.pack(fill="both", expand=True, padx=20, pady=6)
+        speed_scroll(body)
         body.grid_columnconfigure(0, weight=1)
         row = 0
 
@@ -1370,6 +1401,7 @@ class App(ctk.CTk):
 
         body = ctk.CTkScrollableFrame(self, fg_color="transparent")
         body.pack(fill="both", expand=True, padx=20, pady=4)
+        speed_scroll(body)
         body.grid_columnconfigure(0, weight=1)
 
         steps = [
@@ -1476,6 +1508,9 @@ class App(ctk.CTk):
         def quit_key():
             self.after(0, self._close)
 
+        def debug_key():
+            self.after(0, self._toggle_debug)
+
         # Windows: the `keyboard` library. It needs administrator rights for a
         # global hook; without them add_hotkey raises — which must not take the
         # window down, since the on-screen button does the same job.
@@ -1484,6 +1519,7 @@ class App(ctk.CTk):
                 import keyboard
                 keyboard.add_hotkey(self.cfg.start_stop_key, toggle)
                 keyboard.add_hotkey(self.cfg.quit_key, quit_key)
+                keyboard.add_hotkey("f8", debug_key)
             except Exception as exc:                   # noqa: BLE001
                 self._log(f"Hotkeys unavailable ({exc}) — use the button "
                           f"instead. Run as administrator if you want F2/F4.")
@@ -1495,12 +1531,30 @@ class App(ctk.CTk):
             hk = pk.GlobalHotKeys({
                 f"<{self.cfg.start_stop_key.lower()}>": toggle,
                 f"<{self.cfg.quit_key.lower()}>": quit_key,
+                "<f8>": debug_key,
             })
             hk.daemon = True
             hk.start()
             self._hotkeys = hk                         # keep a ref so it lives on
         except Exception as exc:                       # noqa: BLE001
             self._log(f"Hotkeys unavailable ({exc}) — use the button instead.")
+
+    def _toggle_debug(self) -> None:
+        """F8: overlay (Windows) + diagnostic log on; press again to save & stop."""
+        from bloxfish.debug import DEBUG
+        try:
+            if DEBUG.enabled:
+                path = DEBUG.disarm()
+                self._log(f"[debug] OFF — saved {path}" if path else "[debug] OFF")
+            else:
+                # The overlay is hosted by this Tk root; the log lands next to
+                # config.json. On Linux the overlay is skipped (log only).
+                parent = self if sys.platform == "win32" else None
+                path = DEBUG.arm(overlay_parent=parent)
+                where = "overlay + log" if sys.platform == "win32" else "log"
+                self._log(f"[debug] ON ({where}) — writing {path}")
+        except Exception as exc:                       # noqa: BLE001
+            self._log(f"[debug] could not toggle: {exc}")
 
     def _toggle(self) -> None:
         eng = self.engine

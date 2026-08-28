@@ -26,9 +26,9 @@ opens a window that walks you through the rest.
 > **If your browser or antivirus warns about the download — it's a false
 > positive.** To play the minigame the macro sends mouse/keyboard input to the
 > game and reads the screen; that's the same behaviour a keylogger has, so
-> heuristic scanners sometimes flag it on sight. There are **no programs or
-> binaries here — only readable Python** you can inspect line by line, and a
-> plain launcher script. Choose *Keep* / *More info → Run anyway*, or just run
+> heuristic scanners sometimes flag it on sight. There are **no programs,
+> binaries or scripts here — only readable Python** you can inspect line by
+> line. Choose *Keep* / *More info → Run anyway*, or just run
 > `python easy_run.py` from a terminal. (A fresh release is also a brand-new
 > file with no download history, which trips "uncommon download" warnings until
 > enough people have it.)
@@ -59,9 +59,9 @@ clicks land on nothing. The app shows this list too.
 1. **Run the macro as administrator.** This is the big one. If Roblox is
    running as admin and the macro is not, Windows silently drops every click
    and keypress it sends — the fishing bar drifts to one side and never
-   catches, and `F2`/`F4` do nothing. Easiest way: **right-click
-   `Run as Admin.bat` → *Run as administrator*** (say Yes to the popup). Or
-   right-click your terminal → *Run as administrator*, then `python easy_run.py`.
+   catches, and `F2`/`F4` do nothing. Easiest way: **right-click `easy_run.py`
+   → *Run as administrator*** (say Yes to the popup). Or right-click your
+   terminal → *Run as administrator*, then `python easy_run.py`.
 2. **Stand at the NPC**, right on the edge of interaction range — the
    `Interact` prompt should be showing.
 3. **Turn OFF auto-run / running.**
@@ -243,7 +243,7 @@ Set in the app, or in `config.json` afterwards.
 
 | Symptom | Likely cause |
 |---|---|
-| **Bar tracks the fish then drifts to one side and gives up; F2/F4 dead** | **Not running as administrator.** Roblox is elevated and the macro isn't, so Windows drops its input. **Right-click `Run as Admin.bat` → Run as administrator.** This is the #1 cause of "it gives up on the fish". |
+| **Bar tracks the fish then drifts to one side and gives up; F2/F4 dead** | **Not running as administrator.** Roblox is elevated and the macro isn't, so Windows drops its input. **Right-click `easy_run.py` → Run as administrator** (or run it from an admin terminal). This is the #1 cause of "it gives up on the fish". |
 | `NPC dialogue never opened` | Out of interaction range, or the menu box needs calibrating. |
 | `CRAFT window never opened` | The craft-button area is mis-calibrated, or another window overlaps it. |
 | Bot bites at nothing | The bite area reaches the player list in the top-right — shrink it, or remove red/pink cosmetics. |
@@ -252,7 +252,7 @@ Set in the app, or in `config.json` afterwards.
 | Tracks but never quite settles, worse on small zones; or night confuses zone/ground | Turn on the **zone track** box (see *Calibrate controls*). |
 | `bar never appeared` while a reel bar is plainly on screen | A **color capture is off** (most often the reel-bar track). On the latest build captures can't cause this, but if you're on an older one, **Reset to default** the captured colors. Also check the **zone track** box isn't cutting off the thin progress strip. |
 | `[warn] the Zone track box did not contain a full reel bar` | Your zone track box is too tight (cutting the progress strip). Redraw it a little taller to include the strip, or untick it. The bot keeps fishing via the Reel bar band meanwhile. |
-| Hotkeys do nothing | Run as administrator (right-click `Run as Admin.bat` → *Run as administrator*), or use the on-screen buttons. |
+| Hotkeys do nothing | Run as administrator (right-click `easy_run.py` → *Run as administrator*, or use an admin terminal), or use the on-screen buttons. |
 | Nothing works after editing `config.json` | Delete it — the defaults come back. |
 | `ModuleNotFoundError: No module named 'numpy'` | The libraries aren't installed. Both entry points install them automatically now, so make sure you're on the latest version. Otherwise run `pip install -r requirements.txt` yourself. |
 | pip installs, but packages are still missing | Your Python is probably too new for prebuilt downloads to exist yet. Python 3.12 is the safest choice. |
@@ -266,12 +266,23 @@ mis-cropped detection box, daytime glare, and the rest — with how to avoid eac
 The one-line version: plain avatar, no aura fruit, fish at night, calibrate once
 on your own machine, Roblox fullscreen and focused, hands off the mouse.
 
-**Reporting a bug?** Run `python run.py --dev`. It turns on the log, the
-failure-pixel dumps and the working-strip captures all at once and writes them
-into a single `capture_<timestamp>/` folder (with `run.log`) — zip that one
-folder and send it. (`--diag` alone still works if you only want the failure
-frames in `diag/`.) These say far more than a gameplay video, which is
-re-encoded and never shows what the bot actually sampled.
+**Reporting a bug?** Two easy ways, both far more useful than a plain video:
+
+* **Press `F8` while it runs.** This is the simplest. In the app window it turns
+  on a **visual debug overlay** — every detection box the bot uses is framed on
+  your screen with its name, and every click is marked with a labelled dot, so a
+  screen recording *shows* exactly what the bot saw and did. It also starts a
+  **`diag_session_<time>.log`** (next to `config.json`) that records every cast,
+  bite, bar-found size, reel result and click with timestamps. Press `F8` again
+  to stop; it prints where the log was saved. Send that log (and the recording).
+  From a terminal (`run.py`) `F8` writes the log only, no overlay.
+* **Run `python run.py --dev`.** Turns on the log, the failure-pixel dumps and
+  the working-strip captures at once into a single `capture_<timestamp>/` folder
+  — zip that one folder and send it. (`--diag` alone still works for just the
+  failure frames.)
+
+A gameplay video is re-encoded and never shows what the bot actually sampled;
+the `F8` log and the `--dev` captures do.
 
 ---
 

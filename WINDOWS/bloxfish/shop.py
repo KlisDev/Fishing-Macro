@@ -44,6 +44,7 @@ from __future__ import annotations
 import time
 
 from .capture import Rect
+from .debug import DEBUG
 from .inputs import SC_LSHIFT, SC_S, SC_W, digit_scan
 from .vision import (
     craft_window_open, dialogue_overlay_frac, learn_button_present,
@@ -307,8 +308,9 @@ def sell(engine) -> bool:
     if npc in ("none", "off", "") or not npc.startswith("f"):
         raise ShopError("selling is only mapped for the fisherman")
 
-    def click(frac, pause: float = 0.0) -> None:
+    def click(frac, pause: float = 0.0, name: str = "shop click") -> None:
         x, y = _abs(engine.window, frac)
+        DEBUG.click(name, x, y)
         engine.mouse.click_at(x, y)
         if pause:
             engine._sleep(pause)
@@ -403,6 +405,7 @@ def leave_dialogue(engine, tries: int = 3) -> bool:
         if not engine._alive() or not in_dialogue(engine):
             return True
         x, y = _abs(engine.window, cfg.menu_last)
+        DEBUG.click("menu_last (Back/Nevermind)", x, y)
         engine.mouse.click_at(x, y)
         # 'Back' only advances to the main menu; it does not close anything, so
         # allow just a short beat and click again ('Nevermind') rather than
@@ -444,8 +447,9 @@ def buy(engine, amount: int, first_time: bool = False) -> bool:
 
     m, kb, win, log = engine.mouse, engine.keyboard, engine.window, engine.log
 
-    def click(frac, pause: float = 0.0) -> None:
+    def click(frac, pause: float = 0.0, name: str = "shop click") -> None:
         x, y = _abs(win, frac)
+        DEBUG.click(name, x, y)
         m.click_at(x, y)
         if pause:
             engine._sleep(pause)

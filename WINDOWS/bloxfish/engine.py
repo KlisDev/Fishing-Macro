@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 from .capture import Rect, Screen, find_game_window
+from .debug import DEBUG
 from .config import Config, VERSION
 from .controller import ReelController
 from .inputs import Keyboard, Mouse, valid_slot
@@ -213,6 +214,8 @@ class FishingEngine:
         return self.bar_search
 
     def _find_bar_in(self, region) -> BarGeometry | None:
+        DEBUG.box("zone track" if region is self.zone_track else "reel bar band",
+                  region)
         img = self.screen.grab(region)
         return find_bar(img, (region.left, region.top),
                         self.cfg.colors, self.cfg.detection, self.window.width)
@@ -307,12 +310,14 @@ class FishingEngine:
         return best
 
     def _bite_now(self) -> bool:
+        DEBUG.box("bite marker", self.bite_roi)
         img = self.screen.grab(self.bite_roi)
         marker = find_bite_marker(img, self.cfg.colors, self.cfg.detection,
                                   (self.bite_roi.left, self.bite_roi.top))
         return marker is not None
 
     def _meter_score(self) -> int:
+        DEBUG.box("charge meter", self.meter_roi)
         return charge_meter_score(self.screen.grab(self.meter_roi))
 
     def _load_fish_template(self):
@@ -533,6 +538,9 @@ class FishingEngine:
                 self.stats.casts += 1
                 extra = "" if attempt == 1 else f" (attempt {attempt})"
                 self.log(f"[cast] #{self.stats.casts}{extra}")
+                DEBUG.event("cast", f"#{self.stats.casts}", attempt=attempt,
+                            peak=peak, need=int(self.meter_thr),
+                            verified=charged)
                 self._sleep(t.cast_settle)
                 return True
 
@@ -553,6 +561,8 @@ class FishingEngine:
             # short.
             self.log(f"[cast] no charge — retrying ({attempt}/{attempts}) "
                      f"[meter peaked at {peak}, needs {self.meter_thr:.0f}]")
+            DEBUG.event("cast", "no charge", attempt=f"{attempt}/{attempts}",
+                        peak=peak, need=int(self.meter_thr))
             self._meter_miss(peak)
             self._sleep(t.cast_retry_gap)
 
@@ -600,6 +610,7 @@ class FishingEngine:
                     self.stats.bites += 1
                     self._dump_diag("bite")
                     self.log("[bite] hooked")
+                    DEBUG.event("bite", "hooked")
                     self._spend_bait()      # bait is consumed at the bite
                     return True
             else:
@@ -607,6 +618,7 @@ class FishingEngine:
 
         self.stats.bite_timeouts += 1
         self.log("[bite] timed out, recasting")
+        DEBUG.event("bite", "timed out")
         return False
 
     def _reel(self) -> bool:
@@ -691,6 +703,7 @@ class FishingEngine:
                 self._dump_diag("stuck_reel")
                 break
 
+            DEBUG.box("reel bar", geo.full or geo.strip)
             frame = self.screen.grab(geo.full or geo.strip)
             st = read_bar(geo.slice_band(frame), geo, self.cfg.colors,
                           self._zone_w_ref, chest_min_w,
@@ -739,6 +752,16 @@ class FishingEngine:
                 stalling = False
                 self.log("[reel] zone visible again")
             lost_since = None
+
+            # Debug overlay: show what the reel detectors found — the green zone
+            # span and the fish/chest positions — as brackets ABOVE the bar, i.e.
+            # outside the strip we just read, so they can never corrupt it.
+            bt = (geo.full or geo.strip).top - 10
+            DEBUG.mark("zone", st.zone_l, st.zone_r, bt)
+            if st.chest_c is not None:
+                DEBUG.mark("chest", st.chest_c, st.chest_c, bt - 16)
+            if st.fish_c is not None:
+                DEBUG.mark("fish", st.fish_c, st.fish_c, bt - 16)
 
             if st.fish_c is None:
                 # Fish momentarily unreadable: coast on the last decision rather
@@ -854,6 +877,10 @@ class FishingEngine:
                  f"| err avg {err_rms*100:.1f}% max {err_max*100:.1f}% "
                  f"outside {out_pct:.0f}%"
                  + (f" | progress {progress:.0%}" if progress is not None else ""))
+        DEBUG.event("reel", "escaped" if escaped else "done",
+                    s=f"{elapsed:.1f}", hz=f"{ticks/max(elapsed,1e-3):.0f}",
+                    err=f"{err_rms*100:.0f}%", outside=f"{out_pct:.0f}%",
+                    progress=(f"{progress:.0%}" if progress is not None else "?"))
         if escaped:
             self.stats.escapes += 1
             self.log(f"[reel] the fish got away (progress only {progress:.0%}, "
