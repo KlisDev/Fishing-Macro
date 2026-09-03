@@ -1264,7 +1264,7 @@ class App(ctk.CTk):
         step = max(1, self.cfg.shop.craft_step)
         c = Card(body, "How much bait per purchase?",
                  f"Must be a multiple of {step}. Each extra {step} is one more "
-                 f"“+” click in the craft window.", "bait_amount")
+                 f"“+” click in the craft window. DONT SET BEYOND 90 without having CONSERVE BAIT!", "bait_amount")
         self.v_amount = ctk.StringVar(value=str(self.cfg.shop.bait_per_purchase))
         ctk.CTkOptionMenu(c.body, values=[str(step * n) for n in range(1, 11)],
                           variable=self.v_amount).pack(fill="x")
