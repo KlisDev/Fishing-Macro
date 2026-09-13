@@ -14,7 +14,7 @@ import time
 from dataclasses import dataclass, field
 from enum import Enum
 
-from .capture import Rect, Screen, find_game_window
+from .capture import Rect, Screen, find_game_window, focus_game_window
 from .debug import DEBUG
 from .config import Config, VERSION
 from .controller import ReelController
@@ -115,10 +115,15 @@ class FishingEngine:
         # they are defaulted here so the engine is a valid object before then —
         # the GUI builds one to show settings, and the shop helpers read them.
         self._at_npc = True
+        self._npc_repositioned = False
         self._shift_lock = False
+        self._shift_lock_verified = False
         self._rod_equipped = True
         self._buy_failures = 0
         self._since_sell = 0
+        self._last_response_at = time.perf_counter()
+        self._last_response_label = "engine created"
+        self._safety_stopped = False
         self._clip_warned = False
         self._zt_warned = False       # warned once that the zone track box is too tight
         self._zt_fallback = False     # latched: read the wide band, not the box
@@ -190,6 +195,9 @@ class FishingEngine:
     # -- lifecycle ---------------------------------------------------------
     def stop(self) -> None:
         self._stop = True
+        # A manual F2/F4 stop and an automatic safety stop must both release a
+        # held reel button immediately, not only after the current poll exits.
+        self.mouse.release()
 
     def close(self) -> None:
         self.mouse.release()
@@ -197,7 +205,35 @@ class FishingEngine:
         self._end_timer()
 
     def _alive(self) -> bool:
-        return not self._stop
+        if self._stop:
+            return False
+        timeout = max(0.0, float(self.cfg.timing.response_timeout))
+        if (self.running and timeout
+                and time.perf_counter() - self._last_response_at >= timeout):
+            self._safety_stopped = True
+            self._stop = True
+            self.mouse.release()
+            minutes = timeout / 60.0
+            self.log("[safety] no confirmed game response for "
+                     f"{minutes:.1f} min since {self._last_response_label}; "
+                     "stopping and releasing input")
+            return False
+        return True
+
+    @property
+    def safety_stopped(self) -> bool:
+        """Whether the no-response guard, rather than F2/F4, ended this run."""
+        return self._safety_stopped
+
+    def _note_response(self, label: str) -> None:
+        """Record a verified game state change for the safety watchdog.
+
+        Do not call this for attempted clicks or casts.  The watchdog is meant
+        to catch exactly the case where the macro keeps sending input after the
+        game has stopped responding.
+        """
+        self._last_response_at = time.perf_counter()
+        self._last_response_label = label
 
     # -- helpers -----------------------------------------------------------
     def _read_region(self):
@@ -349,8 +385,11 @@ class FishingEngine:
         """Where diag/record files go: under `--dev`'s capture folder if set,
         else the project's own `diag/` or `record/`."""
         from pathlib import Path as _P
+        # CONFIG_PATH is platform-context aware.  Using its parent keeps a
+        # Linux/Sober session's captures out of the Windows source profile.
+        from .config import CONFIG_PATH
         root = (_P(self.cfg.capture_dir) if self.cfg.capture_dir
-                else _P(__file__).resolve().parent.parent)
+                else CONFIG_PATH.parent)
         out = root / name
         out.mkdir(parents=True, exist_ok=True)
         return out
@@ -500,6 +539,16 @@ class FishingEngine:
         and try again. A swallowed press simply dismisses whatever ate it, so
         the next attempt casts cleanly. Returns True once a cast is confirmed.
         """
+        # The cursor must be locked for every cast. A failed Shift Lock toggle
+        # used to leave this internal state as "on" and let the bot fish with a
+        # free cursor; supported runtimes now stop before that unsafe,
+        # mis-aimed cast.
+        if (shop_mod.interaction_safety_guard()
+                and not shop_mod.fishing_shift_lock_ready(self)):
+            self.log("[cast] Shift Lock is not confirmed — stopping before a "
+                     "free-cursor cast")
+            self.stop()
+            return False
         self.state = State.IDLE
         t = self.cfg.timing
         # max(1, …): a hand-edited or Advanced-cooldowns 0 must not silently
@@ -608,6 +657,7 @@ class FishingEngine:
                         time.sleep(pad)
                     self.mouse.click()
                     self.stats.bites += 1
+                    self._note_response("a fish bite")
                     self._dump_diag("bite")
                     self.log("[bite] hooked")
                     DEBUG.event("bite", "hooked")
@@ -849,6 +899,11 @@ class FishingEngine:
                              f"vz {d.v_zone:+.3f} vf {d.v_fish:+.3f} a {self.controller.accel:.2f}")
 
         self.mouse.release()
+        # `_alive()` may have ended the run from inside the reel loop.  Do not
+        # interpret that abrupt exit as a completed fish fight, otherwise the
+        # bookkeeping below would itself count as a fresh game response.
+        if self._stop:
+            return False
         elapsed = time.perf_counter() - t0
         if timed_out:
             self.log(f"[reel] gave up after {elapsed:.1f} s (bar never cleared); "
@@ -886,6 +941,7 @@ class FishingEngine:
             self.log(f"[reel] the fish got away (progress only {progress:.0%}, "
                      f"outside the zone {out_pct:.0f}% of the fight)")
             self._dump_diag("escaped")
+        self._note_response("a reel ending")
         return True
 
     def _dismiss_catch(self) -> None:
@@ -925,6 +981,7 @@ class FishingEngine:
         else:
             self.stats.catches += 1
             self._since_sell += 1
+            self._note_response("a catch")
             self.log(f"[catch] #{self.stats.catches} — recasting")
 
         # Never wait for a card to fade. With the flick there is none; without
@@ -1016,6 +1073,7 @@ class FishingEngine:
             self.bait_count = (self.bait_count or 0) + step * (
                 shop_mod.plus_clicks(amount, step) + 1)
             self.stats.purchases += 1
+            self._note_response("a bait purchase")
             self.log(f"[bait] topped up to {self.bait_count}")
             return
 
@@ -1034,21 +1092,24 @@ class FishingEngine:
         return (s.enabled and s.every > 0 and self._since_sell >= s.every
                 and self.cfg.shop.npc.lower().startswith("f"))
 
-    def _sell_fish(self) -> None:
+    def _sell_fish(self, *, stay_at_npc: bool = False) -> bool:
         """Empty the fish stock at the NPC. Never fatal: a failed sale just
         means we keep fishing with a fuller inventory."""
         try:
-            ok = shop_mod.sell(self)
+            ok = shop_mod.sell(self, stay_at_npc=stay_at_npc)
         except shop_mod.ShopError as exc:
             self.log(f"[sell] {exc}")
             self.cfg.sell.enabled = False       # stop asking every cycle
-            return
+            return False
         if ok:
             self.stats.sales += 1
             self._since_sell = 0
+            self._note_response("a fish sale")
+            return True
         else:
             # Don't retry immediately on every cycle; try again next batch.
             self._since_sell = max(0, self._since_sell - max(1, self.cfg.sell.every // 5))
+            return False
 
     # -- main loop ---------------------------------------------------------
     def run(self) -> None:
@@ -1065,24 +1126,48 @@ class FishingEngine:
     def _run_locked(self) -> None:
         self.running = True
         self._stop = False
-        # Count from the start of this session, not from construction, so the
-        # fish/min figure is not diluted by however long we sat on the hotkey.
-        self.stats.started = time.perf_counter()
+        self._safety_stopped = False
+        self._note_response("session start")
+        self.log("[start] control loop started")
+        # F2 is a global hook, so receiving it only proves that our GUI saw the
+        # key.  Before the first shift-lock tap or cast, return input ownership
+        # to Roblox; otherwise SendInput can be accepted by Windows yet land in
+        # this GUI and produce a string of "meter peaked at 1" retries.
+        if focus_game_window(self.cfg.window_title):
+            self.log("[start] Roblox focused — arming input")
+            self._sleep(0.12)                        # let F2 finish releasing
+        else:
+            self.log("[start] Roblox focus not confirmed — input may be ignored")
+        # Every F2 start is a new session. Reset both the clock and counters;
+        # resetting only ``started`` made a stop/start report old catches over
+        # the new, shorter time window and could produce absurd fish/min rates.
+        self.stats = Stats()
         # The user is told to start inside the NPC's range with shift lock OFF.
-        # Both are tracked as state: entering the fishing stance steps us out of
-        # range and turns shift lock on, and shop.buy() reads them to know
-        # whether to walk back and to release the cursor before clicking menus.
+        # Both are tracked as state: the confirmed NPC dialogue establishes the
+        # pushed fishing position, and shift lock is then restored for casts.
         self._at_npc = True
+        self._npc_repositioned = False
         self._shift_lock = False
+        self._shift_lock_verified = False
         # The checklist requires starting with the rod equipped; the shop stows
-        # it before walking (game bug workaround) and takes it back out after.
+        # it before interaction (game bug workaround) and takes it back out after.
         self._rod_equipped = True
         self._buy_failures = 0
         self._since_sell = 0
-        # Get into casting position: shift lock on, one step off the NPC. This
-        # is required — standing in range, a cast click opens the dialogue.
+        # Establish a known fishing position through one real NPC dialogue.
+        # This replaces the old F2 W movement, which was geometrically unstable
+        # after Roblox pushed the character to a new point on the NPC radius.
         if self.cfg.shop.enter_stance_on_start:
-            shop_mod.enter_fishing_stance(self)
+            if not shop_mod.establish_fishing_anchor(self):
+                self.stop()
+                return
+        elif shop_mod.interaction_safety_guard():
+            # This legacy opt-out skips the NPC anchor, not the fundamental
+            # fishing requirement. The active backend still has to establish
+            # Shift Lock before it can make a centre-screen cast.
+            if not shop_mod.enter_fishing_stance(self):
+                self.stop()
+                return
         try:
             while self._alive():
                 # One cycle is wrapped so a transient fault (a failed grab, the
@@ -1110,14 +1195,20 @@ class FishingEngine:
             self._wait_bar_clear()
             return
 
-        # Sell and restock before casting, never mid-cycle.
-        if self._needs_sell():
-            self._sell_fish()
+        # Sell and restock before casting, never mid-cycle. If both are due,
+        # they are one NPC visit: do not walk W out after selling only to walk
+        # S back for bait, then add another W on top of the first one.
+        sell_due = self._needs_sell()
+        bait_due = self._needs_bait()  # buy at 1, never 0: zero unequips bait
+        if sell_due:
+            sale_ok = self._sell_fish(stay_at_npc=bait_due)
             if not self._alive():
                 return
+            # A failed sale already performed its own safe recovery. Only keep
+            # the shared visit when it actually left us beside the NPC.
+            bait_due = bait_due and sale_ok
 
-        # Buying at 1 rather than 0 matters: at zero the game unequips the bait.
-        if self._needs_bait():
+        if bait_due:
             self._buy_bait()
             if not self._alive():
                 return

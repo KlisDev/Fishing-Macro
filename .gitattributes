@@ -1,3 +1,8 @@
-# Keep shell scripts LF so they run on Linux even when committed from Windows
-# (a CRLF in the shebang line breaks `#!/usr/bin/env bash`).
+* text=auto
+*.py text eol=lf
 *.sh text eol=lf
+*.md text eol=lf
+*.txt text eol=lf
+*.json text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf

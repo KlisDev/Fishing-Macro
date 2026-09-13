@@ -1,92 +1,127 @@
-# Linux support (Sober) — experimental
+# Linux / Sober support — X11 only
 
-This runs the **same** fishing macro on Linux, against Roblox played through
-**[Sober](https://sober.vinegarhq.org/)** (the Flatpak Android build — the only
-practical way to run Roblox on Linux). Only the input and window-finding layer is
-Linux-specific; all the detection and control logic is the shared code in
-`bloxfish/`.
+This is the Linux launcher for the same Blox Fruits fishing macro and premium
+GUI used on Windows. It targets Roblox through **Sober** on an **X11** desktop.
+The detector, Update 30 NPC logic, safety watchdog, calibration workflow, and
+all four GUI pages are shared with the Windows build; Linux replaces only the
+window, focus, input, runtime-profile, and F8-overlay layers.
 
-> **Status: experimental.** It has been built against the Windows client's
-> behaviour and needs testing on a real Sober box. Read *Known limitations*
-> below before expecting it to just work.
+> Wayland is intentionally unsupported in this release. Capture, global
+> hotkeys, input injection, and the click-through hitbox overlay rely on X11.
 
----
+## Before launching
 
-## Requirements
+1. Confirm the desktop session is X11:
 
-- An **X11 session** (log out and pick "… on Xorg" at the login screen).
-  **Wayland is not supported yet** — the screen grabber (`mss`) can't capture a
-  Wayland desktop. Check with: `echo $XDG_SESSION_TYPE` → it must say `x11`.
-- **Sober** installed and Roblox running, standing at the Fisherman with the
-  fishing spot ready (same pre-flight as Windows).
-- Python 3.10+.
+   ```bash
+   echo $XDG_SESSION_TYPE   # must print x11
+   ```
 
-## Setup
+2. Install Python and GUI dependencies. Tk comes from your system package
+   manager, not pip:
+
+   ```bash
+   sudo apt install python3-tk
+   pip install -r LINUX/requirements-linux.txt
+   ```
+
+3. Install the one-time uinput rule, then log out and back in. Do **not** run
+   the macro itself as root.
+
+   ```bash
+   sudo bash LINUX/install-udev.sh
+   ```
+
+4. Open Sober with Roblox visible. The launcher checks that Sober is found,
+   `/dev/uinput` is writable, and capture can inspect the target window before
+   it creates the GUI or sends any game input.
+
+## GUI run
 
 ```bash
-# 1. Dependencies  (Tk comes from the system, not pip)
-sudo apt install python3-tk          # or your distro's equivalent
-pip install -r LINUX/requirements-linux.txt
-
-# 2. Allow input injection (the Linux "run as administrator")
-sudo bash LINUX/install-udev.sh
-#    then log out and back in so the 'input' group applies
-
-# 3. Run — the full GUI (same as Windows)
-python LINUX/easy_run_linux.py       # setup wizard, Calibrate, cooldowns, F2/F4
-
-#    …or a terminal-only run, no window:
-python LINUX/run_linux.py            # F2 start/stop, F4 quit (or Ctrl+C)
+python LINUX/easy_run_linux.py
 ```
 
-`easy_run_linux.py` is the **same GUI as Windows** — the setup wizard, **Calibrate
-controls** (with the colour eyedropper, the **Zone track** box, reference
-images), the **Advanced cooldowns** editor, and F2/F4 hotkeys — just driving the
-uinput/X11 backend.
+The GUI includes the polished Setup workspace, complete Calibrate page,
+expandable Preparation Guide with the NPC-position simulation, and lightweight
+Run Console. Linux-specific preflight guidance appears where input permission
+matters.
 
-The first thing to do is **calibrate**: the Sober (Android) UI can differ from
-the Windows client, so the shipped boxes/colours may not line up. Open
-**Calibrate controls** and use the colour eyedropper + **Zone track** box (see
-the main README) — they exist precisely to pin detection to a different-looking
-client.
+Controls in the **GUI Run Console**:
 
-## How it fits together
+- `F2` — Start / Pause
+- `F4` — Stop the current run without closing the application
+- `F8` — Show / hide hitboxes and write a diagnostic log
 
-- `inputs_linux.py` — a **uinput** virtual mouse + keyboard (kernel-level, like
-  Windows `SendInput`), so Sober forwards it to Android Roblox as real hardware.
-- `find_window_linux.py` — finds the **Sober** window on X11 (by `WM_CLASS`
-  `org.vinegarhq.Sober` / title "Sober").
-- `easy_run_linux.py` / `run_linux.py` — plug those backends into the shared
-  engine (GUI / terminal). The screen grabber (`mss`), the whole GUI, and the
-  detection/control core are reused unchanged.
+F8 uses an X11 Shape overlay with an empty input region. It is click-through
+and clips its drawing outside protected detector regions so it cannot steal
+Sober input or colour the pixels the macro reads. If the X server lacks the
+Shape extension, F8 keeps the diagnostic log and reports that visible hitboxes
+are unavailable instead of opening an unsafe opaque overlay.
 
-## The "run as administrator" trap, Linux edition
+## Separate Sober profile and assets
 
-If `/dev/uinput` isn't writable by you, injected clicks are **silently dropped**
-— the bar drifts to one side and the bot looks like it "gives up on the fish",
-exactly the Windows UIPI symptom. That's what `install-udev.sh` fixes. If you see
-that behaviour, confirm you're in the `input` group (`groups | grep input`) and
-that you logged out and back in.
+Linux never reuses Windows calibration or capture output:
 
-## Known limitations / things to test first
+- `LINUX/config.json` — Sober settings and calibration
+- `LINUX/fish_template.png` — Sober fish-template fallback
+- `LINUX/diag_session_*.log`, `LINUX/diag/`, `LINUX/record/` — diagnostics
+- `LINUX/assets/gui/` — copied GUI examples and calibration references
 
-Run these three checks **in order** — if the first fails, the rest is moot:
+The copied pictures are only examples. Replace them with Sober-specific
+screenshots whenever the Android layout differs; doing so does not affect
+Windows. Calibration positions, detector regions, colour samples, templates,
+and saved setup values are isolated in the Linux profile for the same reason.
 
-1. **Does input reach Sober at all?** With Sober focused, does the macro's cursor
-   move and a menu click register in-game? (uinput → Sober → Android is the
-   unproven link.)
-2. **Does capture return the game, not black?** Some GPU/compositor combos hand
-   back black frames for a specific window.
-3. **Does the fishing UI match the detectors?** The Android client may lay the
-   reel bar out differently — re-tune via colour capture + the Zone track box
-   rather than changing code.
+## Terminal run
 
-Also note:
-- **Wayland**: not supported (capture). A PipeWire/portal path could be added
-  later. Check with `echo $XDG_SESSION_TYPE` — it must be `x11`.
-- **Checklist wording**: the pre-flight checklist still says "run as
-  administrator" (Windows wording); on Linux the equivalent is the udev step
-  above. The steps otherwise apply.
-- **Anti-cheat / ToS**: same caveat as every platform — automating Roblox may
-  violate its rules, and Hyperion could flag synthetic input. Use at your own
-  risk.
+```bash
+python LINUX/run_linux.py [--now] [--debug] [--diag] [--record] [--dev] [--config PATH]
+```
+
+Terminal controls remain intentionally conventional:
+
+- `F2` — start / stop
+- `F4` — quit
+- `F8` — diagnostic log only
+
+`--dev` enables debug, failure captures, and reel-strip recording together in a
+timestamped `capture_*` directory next to the active config. `--config PATH`
+uses that config and keeps its template, logs, diagnostics, recordings, and
+development captures in the same parent directory.
+
+## Sober checks and troubleshooting
+
+The launchers reject these unsafe states before a run starts:
+
+- Wayland or no `DISPLAY`: log into an X11/Xorg session.
+- `/dev/uinput` unavailable: rerun `install-udev.sh`, then log out and in.
+- No Sober window: open Roblox through Sober and leave it visible.
+- Missing Python dependency: install `requirements-linux.txt` again.
+
+A black initial capture is a warning rather than an automatic block: a dark
+scene can be legitimate. Open **Calibrate** and confirm the live workspace
+shows the actual game before pressing F2. Recalibrate after any Sober UI,
+resolution, display-scaling, or window-mode change.
+
+When F2 starts, the X11 backend raises and focuses the detected Sober window and
+confirms focus before sending input. If focus cannot be confirmed, the macro
+warns rather than assuming injected input reached Roblox.
+
+Sober uses the same interaction safeguards as Windows. Enable Roblox's **Shift
+Lock Switch**, leave the current lock off before F2, and let the macro change
+it for dialogue/fishing phases. Before a cast it requires the X11 cursor to
+have actually snapped to the calibrated centre; otherwise it stops instead of
+fishing with a free cursor. A dialogue is accepted only when its visible action
+rows form a properly spaced vertical stack, so unrelated bright pixels cannot
+block a necessary NPC-range probe.
+
+## Privacy and bug reports
+
+`config.json`, fish templates, diagnostic images, recordings, development
+captures, and F8 logs are ignored by Git. They can reveal UI, game state, and
+account information. Keep them out of archives or bug reports unless you have
+sanitized them and deliberately chosen to share them.
+
+Automation may violate Roblox rules or be detected by anti-cheat. Use it at
+your own risk.

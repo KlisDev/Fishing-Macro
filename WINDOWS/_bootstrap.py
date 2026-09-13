@@ -26,6 +26,41 @@ REQUIRED = {
 }
 
 
+def enable_dpi_awareness() -> None:
+    """Keep window geometry, screen pixels, and input in one coordinate space.
+
+    On a scaled 4K monitor, a DPI-unaware Python process can receive a
+    1920-wide logical Roblox window while mss captures 3840 physical pixels.
+    The right-hand NPC menu then lies outside the captured half-window even
+    though calibration fractions look correct. This must run before tkinter,
+    pygetwindow, or any application window exists.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        user32 = ctypes.windll.user32
+        # PER_MONITOR_AWARE_V2, on current Windows 10/11 builds.
+        if user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4)):
+            return
+    except Exception:                               # noqa: BLE001
+        pass
+    try:
+        # Windows 8.1 fallback; 2 is PROCESS_PER_MONITOR_DPI_AWARE.
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)
+        return
+    except Exception:                               # noqa: BLE001
+        pass
+    try:
+        ctypes.windll.user32.SetProcessDPIAware()   # Windows 7 fallback
+    except Exception:                               # noqa: BLE001
+        pass
+
+
+# Both entry points import this module before customtkinter or pygetwindow.
+enable_dpi_awareness()
+
+
 def _missing() -> list[str]:
     out = []
     for module, package in REQUIRED.items():

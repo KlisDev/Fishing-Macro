@@ -11,6 +11,8 @@ is ``org.vinegarhq.Sober`` / instance ``sober`` and whose title is "Sober" (not
 """
 from __future__ import annotations
 
+import time
+
 from bloxfish.capture import Rect
 
 # A few px are shaved off so a window border never leaks into the colour masks,
@@ -28,46 +30,82 @@ def _abs_geometry(win, root):
     return t.x, t.y, geo.width, geo.height
 
 
+def _find_sober_window(display, title: str):
+    """Return the largest visible Sober candidate for an existing Display."""
+    root = display.screen().root
+    wanted = (title or "Roblox").strip().lower()
+    best = None                                    # (area, Window)
+    stack = [root]
+    while stack:
+        win = stack.pop()
+        try:
+            children = win.query_tree().children
+        except Exception:                          # noqa: BLE001
+            children = []
+        stack.extend(children)
+        try:
+            cls = win.get_wm_class()               # (instance, class) or None
+            name = win.get_wm_name() or ""
+            _x, _y, width, height = _abs_geometry(win, root)
+        except Exception:                          # noqa: BLE001
+            continue
+        hay = " ".join(cls).lower() if cls else ""
+        nm = (name or "").lower()
+        if not ("sober" in hay or "sober" in nm or (wanted and wanted in nm)):
+            continue
+        if width > 400 and height > 300:
+            area = width * height
+            if best is None or area > best[0]:
+                best = (area, win)
+    return root, best[1] if best is not None else None
+
+
 def find_game_window(title: str, screen) -> tuple[Rect, bool]:
     try:
         from Xlib import display
 
-        wanted = (title or "Roblox").strip().lower()
         d = display.Display()
-        root = d.screen().root
-
-        best = None                                    # (area, Rect)
-        stack = [root]
-        while stack:
-            win = stack.pop()
-            try:
-                children = win.query_tree().children
-            except Exception:                          # noqa: BLE001
-                children = []
-            stack.extend(children)
-
-            try:
-                cls = win.get_wm_class()               # (instance, class) or None
-                name = win.get_wm_name() or ""
-            except Exception:                          # noqa: BLE001
-                continue
-            hay = " ".join(cls).lower() if cls else ""
-            nm = (name or "").lower()
-            if not ("sober" in hay or "sober" in nm
-                    or (wanted and wanted in nm)):
-                continue
-            try:
+        try:
+            root, win = _find_sober_window(d, title)
+            if win is not None:
                 x, y, w, h = _abs_geometry(win, root)
-            except Exception:                          # noqa: BLE001
-                continue
-            if w > 400 and h > 300:
-                area = w * h
-                if best is None or area > best[0]:
-                    best = (area, Rect(x + _INSET, y + _INSET,
-                                       max(1, w - 2 * _INSET),
-                                       max(1, h - 2 * _INSET)))
-        if best is not None:
-            return best[1], True
+                return Rect(x + _INSET, y + _INSET,
+                            max(1, w - 2 * _INSET),
+                            max(1, h - 2 * _INSET)), True
+        finally:
+            d.close()
     except Exception:                                  # noqa: BLE001
         pass
     return screen.primary(), False
+
+
+def focus_game_window(title: str, *, display_factory=None, x_constants=None,
+                      now=time.perf_counter, pause=time.sleep) -> bool:
+    """Raise Sober and confirm X11 focus before sending any macro input."""
+    try:
+        if display_factory is None or x_constants is None:
+            from Xlib import X, display
+            display_factory = display.Display
+            x_constants = X
+
+        d = display_factory()
+        try:
+            _root, win = _find_sober_window(d, title)
+            if win is None:
+                return False
+            # A hotkey press is user interaction, so most X11 window managers
+            # allow this focus request.  Confirmation prevents blind uinput.
+            win.configure(stack_mode=x_constants.Above)
+            win.set_input_focus(x_constants.RevertToParent, x_constants.CurrentTime)
+            d.sync()
+            deadline = now() + 0.35
+            while now() < deadline:
+                focus = d.get_input_focus().focus
+                if getattr(focus, "id", None) == win.id:
+                    return True
+                pause(0.02)
+        finally:
+            d.close()
+    except Exception:                                  # noqa: BLE001
+        pass
+    return False

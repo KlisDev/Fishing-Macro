@@ -2,21 +2,39 @@
 
 Every value here was either measured from the reference recording (see
 docs/MECHANICS.md) or is a latency/threshold knob you may want to touch.
-Load order: defaults -> config.json next to the project root (if present).
+Load order: defaults -> the active runtime profile's config.json (if present).
+Windows uses the project profile by default; a platform launcher can select an
+isolated profile before this module is imported.
 """
 
 from __future__ import annotations
 
 import json
+import math
+import os
+import tempfile
 from dataclasses import dataclass, field, asdict, is_dataclass
 from pathlib import Path
 
+# ``ROOT`` is the code directory and remains stable for source-relative docs.
+# A platform launcher may keep its *user state* elsewhere.  Linux/Sober uses
+# this to avoid a calibration or fish template overwriting the Windows profile.
 ROOT = Path(__file__).resolve().parent.parent
-CONFIG_PATH = ROOT / "config.json"
+_config_override = os.environ.get("BLOXFISH_CONFIG_PATH", "").strip()
+if _config_override:
+    CONFIG_PATH = Path(_config_override).expanduser().resolve()
+    RUNTIME_ROOT = CONFIG_PATH.parent
+else:
+    _runtime_override = os.environ.get("BLOXFISH_RUNTIME_ROOT", "").strip()
+    RUNTIME_ROOT = (Path(_runtime_override).expanduser().resolve()
+                    if _runtime_override else ROOT)
+    CONFIG_PATH = RUNTIME_ROOT / "config.json"
 
 # Printed at startup. Bump this on every release: the fastest way to waste an
 # afternoon is debugging a bug report from a build that already has the fix.
-VERSION = "1.6.0"
+# Patch iteration only. A confirmed, fully adapted Update 30/NPC release is
+# reserved for the next minor version.
+VERSION = "1.8.1.1.36"
 
 
 @dataclass
@@ -138,6 +156,15 @@ class Colors:
     cap_fish_out_on: bool = False
     cap_fish_out_bgr: tuple = (142, 95, 24)
     cap_fish_out_tol: int = 40
+    # Update 30 uses a warm yellow header for the bottom catch card and the
+    # CRAFT action. These two opt-in samples handle displays whose UI yellow is
+    # shifted by post-processing or a different client build.
+    cap_dialogue_on: bool = False
+    cap_dialogue_bgr: tuple = (40, 205, 245)
+    cap_dialogue_tol: int = 45
+    cap_craft_on: bool = False
+    cap_craft_bgr: tuple = (35, 210, 245)
+    cap_craft_tol: int = 45
 
 
 @dataclass
@@ -243,6 +270,12 @@ class Timing:
 
     # After an unexpected error in a cycle, pause this long, then carry on.
     error_recovery: float = 1.0
+
+    # Safety stop: end the run if the game produces no confirmed response for
+    # this long. Zero disables the guard. A response is a hooked fish, a reel
+    # ending, or a completed purchase/sale -- merely sending another click does
+    # not reset it, so a broken UI cannot keep the macro alive indefinitely.
+    response_timeout: float = 300.0
 
 
 @dataclass
@@ -418,10 +451,9 @@ class Control:
 class Sell:
     """Selling the fish stock at the Fisherman.
 
-    Route measured from a reference recording: Interact -> `Shop` (menu
-    slot 1) -> `Sell Fish` (slot 2) -> `Confirm` (back at slot 1), after which
-    the dialogue closes itself. The recording showed $72,935,060 -> $73,214,076
-    on one sale.
+    Route: Interact -> root.`Shop` -> shop.`Sell Fish` -> confirm.`Confirm`,
+    after which the dialogue closes itself. Update 30's rows fall between
+    pages, so shop.py resolves these named actions against the live stack.
 
     The NPC will not buy favourited fish or your heaviest, so nothing needs
     protecting here.
@@ -501,10 +533,11 @@ class Chest:
 
 @dataclass
 class Shop:
-    """Buying bait from the fishing NPC. See bloxfish/shop.py for the mapping.
+    """Buying bait from the fishing NPC. See bloxfish/shop.py for the route.
 
-    Click positions are fractions of the game window, converted from the
-    logical-pixel positions measured in the reference recording.
+    Legacy click positions are fractions of the game window, converted from the
+    reference recording. Update 30 locates the live visible menu rows instead;
+    these remain a conservative fallback for older or unrecognised UI.
     """
 
     npc: str = "fisherman"          # "fisherman", or "none" to skip buying
@@ -514,14 +547,18 @@ class Shop:
     buy_at: int = 1
     craft_step: int = 10            # CRAFT starts at 10 and each '+' adds 10
 
-    # Click targets, as fractions of the game window. These are the measured
+    # Legacy click targets, as fractions of the game window. These are the measured
     # *centres* of each button, not wherever the cursor happened to sit in the
     # recording — several of those observed positions were within a pixel or two
     # of a button's top edge.
     center: tuple = (0.5000, 0.5107)        # (960,527) Interact / screen centre
-    menu_item1: tuple = (0.7490, 0.5184)    # (1438,535) Shop->Buy Bait->Basic Bait
-    menu_item2: tuple = (0.7490, 0.5717)    # (1438,590) second entry, e.g. 'Sell Fish'
-    menu_last: tuple = (0.7490, 0.6880)     # (1438,710) 'Back' then 'Nevermind'
+    # These four dots are deliberately *ordinal*, not semantic. Update 30
+    # reuses a row position for a different label after a click; shop.py owns
+    # the page/action map and normally finds each live row itself.
+    menu_item1: tuple = (0.7490, 0.5184)    # top: Shop / Buy Bait / Basic Bait
+    menu_item2: tuple = (0.7490, 0.5717)    # second: Fishing Index / Sell Fish
+    menu_item3: tuple = (0.7490, 0.6300)    # third: Job Stats (root page)
+    menu_last: tuple = (0.7490, 0.6880)     # bottom: Nevermind / Back
     craft_plus: tuple = (0.6365, 0.5407)    # (1222,558) '+' quantity
     craft_button: tuple = (0.5000, 0.6667)  # (960,688)  'Craft'
     craft_close: tuple = (0.6600, 0.2926)   # (1267,302) craft 'Close' (recovery)
@@ -551,12 +588,13 @@ class Shop:
     craft_timeout: float = 6.0
     close_timeout: float = 4.0
     # Getting out of the bait page needs two clicks on the bottom entry: 'Back'
-    # (main menu) then 'Nevermind' (closed). 'Back' does NOT close the dialogue,
-    # so waiting close_timeout after it -- as the exit used to -- burned ~4 s
-    # doing nothing before the second click. This is the short beat between the
-    # two: long enough for the next page to render, short enough not to pay for
-    # a close that Back was never going to do.
+    # (main menu) then 'Nevermind' (closed). The new UI briefly has no reliable
+    # rows while it redraws, so the exit waits for a complete root page instead
+    # of treating that transient blank state as a successful close.
     after_back: float = 0.5
+    root_menu_timeout: float = 2.0  # Back -> complete four-row root page
+    root_menu_settle: float = 0.9   # let its final Nevermind row become clickable
+    nevermind_retry: float = 1.4    # observed close window before a retry
     # Settle before the FIRST exit click. The craft window closing snaps the
     # dialogue back to the main menu, and 'Nevermind' is the last entry to
     # render; clicking into that half-drawn menu misses and the bot visibly
@@ -566,28 +604,35 @@ class Shop:
 
     # Waits, in seconds (measured: menu swaps ~0.5 s).
     after_click: float = 0.6
+    # A row count alone cannot distinguish the finished three-row Shop page
+    # from a four-row root page while its top row is still falling away. Require
+    # the complete target stack to remain unchanged this long before acting.
+    menu_page_settle: float = 0.65
     after_plus: float = 0.25
     after_shift: float = 0.35
-    after_step: float = 0.8
     # Dismissing the dialogue with 'Nevermind' locks the character for ~1.5 s.
     # Walking during that window goes nowhere, which would leave us short of the
     # fishing spot, so wait it out before moving.
     after_nevermind: float = 1.5
     # Let the rod finish being put away / taken back out before moving.
     after_rod: float = 0.45
-    walk_tap: float = 0.12          # how long to hold S/W when stepping
+    # NPC interaction pushes the character to its own perimeter position.
+    # Never try to cancel that push with W: a fixed axis is a chord once the
+    # character is even slightly off the NPC's radial line. First try Interact
+    # from the pushed position, then use only one very short S probe if needed.
+    walk_back_tap: float = 0.10     # S probe to reacquire interaction range
     approach_wait: float = 1.2      # after tapping S, before clicking Interact
-    # If the dialogue doesn't open, step back again and retry. Out of range the
-    # same click charges the rod instead, so this self-corrects.
-    max_approach_attempts: int = 3
+    direct_dialog_timeout: float = 0.9  # direct Interact -> root menu witness
+    # Number of S probes after the no-movement Interact attempt. More probes
+    # mean more angular drift, so one is the deliberately safe default.
+    max_approach_attempts: int = 1
     poll: float = 0.08              # how often to re-check a UI state
 
     # Give up on buying after this many consecutive failures.
     max_failures: int = 3
 
-    # On F2, engage shift lock and step forward into casting position. The user
-    # is told to start standing at the NPC with shift lock off, so this is what
-    # gets them fishing.
+    # On F2, open and immediately leave the NPC dialogue. The game's own push
+    # establishes the fishing position; the macro never sends a startup W.
     enter_stance_on_start: bool = True
 
 
@@ -633,6 +678,9 @@ COOLDOWNS: list = [
         ("timing", "rod_flick_settle", "After re-equipping the rod", "s"),
         ("timing", "error_recovery", "Pause after a cycle error", "s"),
     ]),
+    ("Safety", [
+        ("timing", "response_timeout", "Stop after no game response (0 = off)", "s"),
+    ]),
     ("Catch popups", [
         ("dialog", "clear_timeout", "Wait for the catch popup to clear", "s"),
         ("dialog", "after_clear", "After clearing the catch popup", "s"),
@@ -642,13 +690,17 @@ COOLDOWNS: list = [
         ("shop", "before_leave", "Before clicking Nevermind (menu settle)", "s"),
         ("shop", "after_nevermind", "After leaving the dialogue", "s"),
         ("shop", "after_back", "Between 'Back' and 'Nevermind'", "s"),
+        ("shop", "root_menu_timeout", "Wait for root menu after 'Back'", "s"),
+        ("shop", "root_menu_settle", "Root menu settle before 'Nevermind'", "s"),
+        ("shop", "nevermind_retry", "Retry 'Nevermind' after", "s"),
         ("shop", "after_click", "Between menu button clicks", "s"),
+        ("shop", "menu_page_settle", "Stable menu page before an action", "s"),
         ("shop", "after_plus", "Between '+' clicks in Craft", "s"),
         ("shop", "after_shift", "After a shift-lock toggle", "s"),
-        ("shop", "after_step", "After a step (break-out walk)", "s"),
         ("shop", "after_rod", "After stowing / drawing the rod", "s"),
-        ("shop", "walk_tap", "Step key hold (break-out walk)", "s"),
+        ("shop", "walk_back_tap", "Back S hold (NPC range probe)", "s"),
         ("shop", "approach_wait", "After stepping toward the NPC", "s"),
+        ("shop", "direct_dialog_timeout", "Direct Interact → NPC menu", "s"),
         ("shop", "dialog_timeout", "Wait for the NPC dialogue to open", "s"),
         ("shop", "craft_timeout", "Wait for the Craft window", "s"),
         ("shop", "close_timeout", "Wait for the dialogue to close", "s"),
@@ -736,7 +788,8 @@ class Config:
         fields |= {f"shop.menu_{s}" for s in boxes}
         fields |= {f"shop.craft_btn_{s}" for s in boxes}
         fields |= {f"shop.{k}" for k in ("npc", "bait_per_purchase", "center",
-                                         "menu_item1", "menu_item2", "menu_last",
+                                         "menu_item1", "menu_item2", "menu_item3",
+                                         "menu_last",
                                          "craft_plus", "craft_button", "craft_close")}
         fields |= {"sell.enabled", "sell.every", "chest.enabled",
                    "timing.slow_rod_flick", "timing.fast_bite"}
@@ -745,7 +798,7 @@ class Config:
         # the `_on` flags default False so an install that never captured keeps
         # tracking code updates.
         for elem in ("track", "chest", "progress", "zone", "fish",
-                     "zone_out", "fish_out"):
+                     "zone_out", "fish_out", "dialogue", "craft"):
             fields |= {f"colors.cap_{elem}_on", f"colors.cap_{elem}_bgr",
                        f"colors.cap_{elem}_tol"}
         fields |= {"detection.fish_tpl_on", "detection.fish_tpl_thr"}
@@ -753,7 +806,7 @@ class Config:
         return fields
 
     @staticmethod
-    def load(path: Path | None = None) -> "Config":
+    def load(path: Path | str | None = None) -> "Config":
         """Defaults, overlaid with config.json if it is readable.
 
         Never raises. This file is hand-edited by users and shipped between
@@ -761,7 +814,11 @@ class Config:
         from starting — bad input is ignored and the defaults stand.
         """
         cfg = Config()
-        path = path or CONFIG_PATH
+        # argparse and third-party callers naturally pass strings.  The old
+        # implementation called ``.exists()`` on that string, swallowed the
+        # resulting AttributeError, and silently returned defaults -- making
+        # ``run.py --config other.json`` look accepted while ignoring the file.
+        path = Path(path) if path is not None else CONFIG_PATH
         try:
             if not path.exists():
                 return cfg
@@ -777,7 +834,7 @@ class Config:
             pass
         return cfg
 
-    def save(self, path: Path | None = None) -> None:
+    def save(self, path: Path | str | None = None) -> None:
         """Write the user's own settings (see `user_fields`), plus any cooldown
         they changed from its default.
 
@@ -786,7 +843,7 @@ class Config:
         Only a value the user deliberately changed is persisted; Reset returns it
         to the default and it drops back out of the file on the next save.
         """
-        path = path or CONFIG_PATH
+        path = Path(path) if path is not None else CONFIG_PATH
         keep = Config.user_fields()
         defaults = asdict(Config())
         full = asdict(self)
@@ -804,7 +861,29 @@ class Config:
                         section[k] = v          # a changed cooldown override
                 if section:
                     out[key] = section
-        path.write_text(json.dumps(out, indent=2), encoding="utf-8")
+        # Write beside the destination and replace it only after the complete
+        # JSON is safely on disk.  A killed process used to leave a truncated
+        # config which load() then had to discard wholesale on the next run.
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                    "w", encoding="utf-8", dir=path.parent,
+                    prefix=f".{path.name}.", suffix=".tmp",
+                    delete=False) as fh:
+                json.dump(out, fh, indent=2, allow_nan=False)
+                fh.write("\n")
+                fh.flush()
+                os.fsync(fh.fileno())
+                tmp = Path(fh.name)
+            tmp.replace(path)
+            tmp = None
+        finally:
+            if tmp is not None:
+                try:
+                    tmp.unlink(missing_ok=True)
+                except OSError:
+                    pass
 
 
 def _merge(obj, data: dict, keep: set | None = None, prefix: str = "") -> None:
@@ -832,7 +911,9 @@ def _merge(obj, data: dict, keep: set | None = None, prefix: str = "") -> None:
         elif isinstance(current, tuple):
             if isinstance(value, (list, tuple)) and len(value) == len(current):
                 try:
-                    setattr(obj, key, tuple(float(v) for v in value))
+                    converted = tuple(float(v) for v in value)
+                    if all(math.isfinite(v) for v in converted):
+                        setattr(obj, key, converted)
                 except (TypeError, ValueError):
                     pass
         elif value is None:
@@ -841,7 +922,8 @@ def _merge(obj, data: dict, keep: set | None = None, prefix: str = "") -> None:
             if isinstance(value, bool):
                 setattr(obj, key, value)
         elif isinstance(current, (int, float)):
-            if isinstance(value, (int, float)) and not isinstance(value, bool):
+            if (isinstance(value, (int, float)) and not isinstance(value, bool)
+                    and (not isinstance(value, float) or math.isfinite(value))):
                 setattr(obj, key, type(current)(value))
         elif isinstance(current, str):
             setattr(obj, key, str(value))

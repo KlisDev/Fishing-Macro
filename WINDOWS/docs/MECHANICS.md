@@ -161,11 +161,12 @@ un-steered — 29% of one catch — which from outside looks exactly like the bo
 giving up mid-fish.
 
 Both were fixed by measurement, not by guessing: `track_neutral_tol` (12, was a
-hardcoded 6) makes the mask see tester B's track at 0.548 instead of 0.036, and
-the threshold drops to 0.12. That costs nothing, because across 713 frames from
-three recordings taken *after* the bar was gone, this gate rejected **none** of
-them at any threshold down to 0.0 — `read_bar`'s zone-column test was already
-doing the whole job.
+hardcoded 6) makes the mask see tester B's track at 0.548 instead of 0.036. The
+threshold was first dropped to 0.12, but later grey-dock recordings exposed the
+opposite failure: that value could keep a phantom bar alive after the catch.
+The current compromise is **0.25**, below the measured 0.293 live-frame floor,
+while restoring useful post-catch scenery rejection. `read_bar`'s zone-column
+test remains the other half of the guard.
 
 Measured over 1252 frames, three machines: frames steered while the minigame
 was live went from **297/539 (55%) to 539/539 (100%)**, with phantom reads
@@ -223,7 +224,7 @@ The hue is the load-bearing fact: it sits on the magenta side of red, so a
 pure-red costume item (a candy cane, H ~0-8) does **not** match, while the
 marker does regardless of the avatar. Detection (see `vision.find_bite_marker`):
 
-1. HSV mask `H∈[158,179], S≥80, V≥150`.
+1. HSV mask `H∈[158,179], S≥45, V≥110`.
 2. morphological close → the ring + `!` become one solid blob.
 3. connected components → accept a blob whose **larger side clears ~5.5 % of the
    ROI width** (the decisive gate), is roughly the right aspect (0.40–2.30) and
@@ -334,22 +335,37 @@ window 1920x1032, read off the on-screen mouse-position overlay.
 
 ### Dialogue tree
 
-The option we want is always the **first** entry, so the same click position
-works three times running:
+Update 30 makes the stack fall when a page has fewer choices. A row's location
+is not its meaning: the macro names the page/action first, then finds that row
+in the live stack immediately before the click.
 
-| # | Click | Position | Result |
+| Page | Rows, top to bottom |
+|---|---|
+| root | `Shop`, `Fishing Index`, `Job Stats`, `Nevermind` |
+| shop | `Buy Bait`, `Sell Fish`, `Nevermind` |
+| bait | `Basic Bait`, `Back` |
+| confirm | `Confirm`, `Nevermind` |
+
+The buy route is `root.Shop -> shop.Buy Bait -> bait.Basic Bait`; it confirms
+the stack transitions **4 -> 3 -> 2** before CRAFT, and requires each target
+stack to hold still for the configured page-settle interval. This prevents a
+partially falling root page from being mistaken for Shop, where its second row
+would be Fishing Index rather than Sell Fish. The exit uses the bottom row:
+`bait.Back`, then `root.Nevermind`. The sell route is
+`root.Shop -> shop.Sell Fish -> confirm.Confirm`.
+
+The old fixed points remain only as a four-dot fallback, in ordinal order:
+
+| # | Fallback point | Legacy reference | Root-page role |
 |---|---|---|---|
-| 1 | screen centre | (960, 527) | `Interact` → dialogue opens |
-| 2 | menu item 1 | (1438, 535) | `Shop` |
-| 3 | menu item 1 | (1438, 535) | `Buy Bait` |
-| 4 | menu item 1 | (1438, 535) | `Basic Bait` → CRAFT window |
-| 5 | `+` ×(N/10−1) | (1222, 558) | quantity 10 → 20 → 30 … |
-| 6 | `Craft` | (960, 688) | buys, window closes |
-| 7 | menu last | (1438, 710) | `Back` → main menu |
-| 8 | menu last | (1438, 710) | `Nevermind` → dialogue closes |
+| 1 | menu item 1 | (1438, 535) | `Shop` |
+| 2 | menu item 2 | (1438, 590) | `Fishing Index` |
+| 3 | menu item 3 | (1438, 651) | `Job Stats` |
+| 4 | menu last | (1438, 710) | `Nevermind` |
 
-`Back` and `Nevermind` are both the **last** entry of their menu and land on the
-same spot, so one position covers both.
+On the other pages, item 1 represents Buy Bait / Basic Bait / Confirm, item 2
+represents Sell Fish, and the bottom represents Back or Nevermind. These are
+only used when the visible-row detector cannot prove a stack.
 
 These are the measured button **centres**, not where the cursor happened to sit
 in the recording. The observed positions — `Shop` at (1409,510), `Nevermind` at
@@ -405,13 +421,13 @@ hands** with its hotbar key. So the purchase does:
 
 ```
 rod OFF  (hotbar key)      <- clears the lock, before any movement
-S        walk back to the NPC
+Interact try                 <- use the pushed position first
+S        one short range probe only if Interact misses
 Shift    release shift lock
 ... Interact / Shop / Buy Bait / Basic Bait / + / Craft / Back / Nevermind ...
 wait     ~1.5 s post-dismiss lock
-rod ON   (hotbar key)      <- draw it again, then step forward
+rod ON   (hotbar key)      <- draw it again; do not walk forward
 Shift    shift lock on
-W        step into casting position
 ```
 
 The hotbar key is a **toggle**, so — like shift lock — the state is tracked
@@ -425,31 +441,22 @@ trying to detect the stuck state, and costs one key press.
 
 ### Casting while still in the NPC's radius re-opens the dialogue
 
-A purchase can succeed and *still* strand the bot, because the step forward
-afterwards is subject to the same stuck-movement bug. Observed in
-a reference recording:
+A purchase can succeed while a dialogue remains on screen. A centre-screen
+cast would then re-open or act through that dialogue, so the macro stops
+safely if it cannot verify that `Nevermind` closed it.
 
 ```
-[shop] no dialogue (attempt 1) — stepping back again   <- the S step also failed once
-[shop] done — 10 bait bought                            <- purchase itself fine
+[shop] bait bought, but dialogue did not close — stopping safely
 [bait] topped up to 11
-[cast] no charge — retrying (1/4)
-[cast] no charge — retrying (2/4)
 ```
 
-The `W` step never moved the character, so it was still inside the NPC's
-radius, where a click at screen centre **talks to him instead of charging the
-rod** — the recording shows the dialogue re-opening on each cast attempt. The
-cast verification correctly reported "no charge", but the plain retry just
-clicked again and re-opened the dialogue, forever.
-
-So a failed charge now checks whether a dialogue is open, and if so:
+So a failed charge checks whether a dialogue is open, and if so:
 
 ```
 Shift -> OFF      release the cursor
 Nevermind ...     close the dialogue
-rod OFF, rod ON   clear the stuck movement that stranded us in range
-Shift -> ON, W    step out of range
+rod OFF, rod ON   clear the stuck state
+Shift -> ON        use the NPC-pushed position; no movement correction
                   then retry the cast
 ```
 
@@ -528,17 +535,16 @@ it.
 ### You must step away from the NPC to fish
 
 Standing inside interaction range, a click at screen centre opens the
-**dialogue**; outside it, the same click **charges the rod**. That is why the
-bot presses Left Shift + `W` on start-up — and it is also a trap: the second
-live failure was the bot stepping away for casting position, then trying to buy
-without walking back, so its "Interact" click charged a cast instead (the green
-charge meter is visible in the recording at 13 s and 16 s while the log sat
-waiting for a dialogue that could never appear).
+**dialogue**; outside it, the same click charges the rod. Update 30's NPC push
+makes a fixed `W`/`S` return path unstable: once the character is slightly off
+the radial line, a fixed-axis step is diagonal and the next push amplifies that
+angular error.
 
-So "do I need to walk back?" is tracked as **state** (`engine._at_npc`), not as
-a "first purchase" flag: `enter_fishing_stance()` clears it, and the purchase
-sets it again after tapping `S`. If the dialogue still does not open, the bot
-taps `S` and retries up to `shop.max_approach_attempts` times before failing.
+F2 therefore opens and immediately closes one confirmed NPC dialogue first.
+Roblox's own push is the fishing-position reset; the macro sends **no forward
+walk**. Later shop visits try Interact without moving, then use at most one
+small `S` range probe only when the dialogue is absent. A missing dialogue
+after that probe fails the shop route rather than accumulating movement.
 
 ### Getting in and out
 
@@ -555,12 +561,13 @@ coin flip. The engine tracks it (`engine._shift_lock`), anchored by the user
 starting with it off, and drives it to whatever each phase needs:
 
 ```
-start (at NPC, lock OFF)   Shift->ON, W                 -> fishing
-buy                        S            (walk back)
+start (at NPC, lock OFF)   Interact, Nevermind          -> pushed fishing position
+                           Shift->ON                     -> fishing
+buy                        Interact, then one small S probe only if needed
                            Shift->OFF   (cursor freed)
                            Interact, Shop, Buy Bait, Basic Bait,
                            +, Craft, Back, Nevermind
-                           Shift->ON, W                 -> fishing
+                           Shift->ON                     -> fishing
 ```
 
 This was the third live failure, and a silent one: the previous version held
@@ -569,10 +576,11 @@ centre of the screen.
 
 * Releasing shift lock also **leaves the cursor at centre** — exactly where the
   `Interact` prompt is — so no separate centring step is needed.
-* A **S** tap walks back into range and the `Interact` prompt reappears
-  (~0.5 s), then the sequence repeats from step 1.
-* A failed purchase still restores the fishing state (lock ON, one step off the
-  NPC), so the next cast cannot re-open the dialogue it just backed out of.
+* A direct Interact attempt comes before the optional small **S** range probe.
+  This avoids needless movement when the game left the character on the usable
+  edge of the interaction radius.
+* A failed purchase restores shift lock without a corrective walk, so failure
+  cannot turn into accumulated NPC-position drift.
 
 ### Roblox ignores SetCursorPos
 
@@ -623,9 +631,9 @@ frame:
 
 A fixed 0.6 s wait after `Back` fired the `Nevermind` click straight into the
 blank gap, so the dialogue stayed open and the bot walked off still talking to
-the NPC. The exit therefore waits for the menu to reach its **full 4 buttons**
-before pressing the last entry. Counting is enough to tell the states apart:
-bait menu 2, transition 0-1, partial main menu 3, complete main menu 4.
+the NPC. The current exit path waits for its configured menu-settle delay,
+clicks the calibrated last entry, and verifies that the dialogue actually
+closed. If it did not, recovery repeats the close path instead of walking away.
 
 Dismissing with `Nevermind` also **locks the character for ~1.5 s**; walking
 during that window goes nowhere and leaves the bot short of its fishing spot,
@@ -661,20 +669,10 @@ away still costs it), which is where the engine decrements.
 
 ### Selling the stock
 
-Mapped from a reference recording. Same NPC, and the layout is convenient —
-two of the three clicks reuse positions the buy route already knows:
-
-| # | Click | Position | Result |
-|---|---|---|---|
-| 1 | screen centre | (960, 527) | `Interact` |
-| 2 | menu item 1 | (1438, 530) | `Shop` |
-| 3 | **menu item 2** | **(1438, 590)** | `Sell Fish` |
-| 4 | menu item 1 | (1438, 530) | `Confirm` |
-
-`Sell Fish` is the **second** entry — the only place in either route that is not
-the first or last slot — and `Confirm` lands back on the first. After Confirm
-the dialogue closes itself; the recording shows the balance going
-`$72,935,060 -> $73,214,076` on a single sale.
+The named route is `root.Shop -> shop.Sell Fish -> confirm.Confirm`. `Sell
+Fish` is the second visible row only on the **shop** page (the second root row
+is Fishing Index); the macro verifies the four, three, then two-row pages
+instead of reusing an old coordinate. After Confirm the dialogue closes itself.
 
 Nothing needs protecting: the NPC states outright that it will not buy
 favourited fish or your heaviest.
@@ -857,8 +855,11 @@ genuine bar   0.460 of window width   (identical in every session)
 phantom bars  0.222 / 0.271 / 0.287 / 0.378 / 0.621 / 0.825
 ```
 
-Bounding the width to `0.40 - 0.55` of the window keeps every genuine bar and
-rejects all six phantoms.
+That first fix bounded width to `0.40 - 0.55` of the window. The current finder
+uses wider **0.18 - 0.99** compatibility bounds because calibrated/cropped and
+different-scale layouts can legitimately fall outside the old range; the
+decisive rejection is now structural: a progress strip plus its playfield band,
+not width alone. A bare XP/HUD strip is rejected by the same structure check.
 
 > **Not yet validated against a recording.** No chest occurs in any capture
 > available here, so the color thresholds above come from screenshots rather
@@ -867,11 +868,14 @@ rejects all six phantoms.
 > unchanged (zone p95 0.00 px, fish p95 1.00 px). A single recording of a chest
 > appearing would let the thresholds be measured properly.
 
-## 10. Not yet modelled
+## 10. Remaining validation gaps
 
-* **Chest mechanic** (part 3 of the project) — does not occur in this recording.
+* **Chest collection is implemented**, including holding a remembered target
+  after the closed tile changes appearance, but no available recording contains
+  a real chest. Its color thresholds still need an end-to-end recorded test.
 * Whether the zone's velocity is zeroed when it hits a track edge (the player
   never reached one).
 * The cast-power meter is a world-anchored vertical bar next to the character,
-  so it moves with the camera. The engine holds for a fixed time instead of
-  reading it.
+  so it moves with the camera. The engine reads it to verify the cast press was
+  accepted, but the maximum charge hold remains a configured time rather than a
+  closed-loop release target.

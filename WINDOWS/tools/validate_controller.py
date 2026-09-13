@@ -161,7 +161,7 @@ def main() -> int:
               f"{rec_failures} recorded-run loss(es)")
     else:
         print("all scenarios, synthetic and recorded: 100% catch rate")
-    return 0
+    return 1 if failures or rec_failures else 0
 
 
 if __name__ == "__main__":

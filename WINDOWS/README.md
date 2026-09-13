@@ -26,9 +26,9 @@ opens a window that walks you through the rest.
 > **If your browser or antivirus warns about the download — it's a false
 > positive.** To play the minigame the macro sends mouse/keyboard input to the
 > game and reads the screen; that's the same behaviour a keylogger has, so
-> heuristic scanners sometimes flag it on sight. There are **no programs,
-> binaries or scripts here — only readable Python** you can inspect line by
-> line. Choose *Keep* / *More info → Run anyway*, or just run
+> heuristic scanners sometimes flag it on sight. There are **no opaque binaries
+> or Windows executables here**; the macro itself is readable Python you can
+> inspect line by line. Choose *Keep* / *More info → Run anyway*, or just run
 > `python easy_run.py` from a terminal. (A fresh release is also a brand-new
 > file with no download history, which trips "uncommon download" warnings until
 > enough people have it.)
@@ -59,9 +59,9 @@ clicks land on nothing. The app shows this list too.
 1. **Run the macro as administrator.** This is the big one. If Roblox is
    running as admin and the macro is not, Windows silently drops every click
    and keypress it sends — the fishing bar drifts to one side and never
-   catches, and `F2`/`F4` do nothing. Easiest way: **right-click `easy_run.py`
-   → *Run as administrator*** (say Yes to the popup). Or right-click your
-   terminal → *Run as administrator*, then `python easy_run.py`.
+   catches, and `F2`/`F4` do nothing. Open PowerShell or Windows Terminal with
+   **Run as administrator**, change to this `WINDOWS` folder, then run
+   `python easy_run.py`.
 2. **Stand at the NPC**, right on the edge of interaction range — the
    `Interact` prompt should be showing.
 3. **Turn OFF auto-run / running.**
@@ -81,9 +81,9 @@ Two more things that matter, because of how the bite marker is detected:
   push the marker outside the area the bot watches — fixable with **Calibrate
   controls** (below).
 
-`F2` starts and stops. `F4` quits. If the hotkeys do not work, the window has
-buttons that do the same thing (a global hotkey needs administrator rights on
-Windows).
+`F2` starts and stops, `F4` quits, and `F8` toggles the diagnostic log/overlay.
+If the main hotkeys do not work, the window has buttons that do the same thing
+(a global hotkey needs administrator rights on Windows).
 
 ---
 
@@ -99,8 +99,8 @@ with the overlays grouped and color-coded:
 | Group | What it covers |
 |---|---|
 | 🎣 **Fishing** | reel bar band, zone track (optional), bite marker area, cast charge meter |
-| 💬 **Catch popups** | catch card, the `Learn` button on the rare recipe note |
-| 🧑 **Talking to the NPC** | the menu button stack, and the buttons the bot clicks |
+| 💬 **Catch popups** | legacy catch card area and the `Learn` button on the rare recipe note |
+| 🧑 **Talking to the NPC** | Interact plus all four ordinal menu-row fallbacks; Update 30 rows are found live |
 | 🪙 **Buying bait** | the craft window, `+`, `Craft`, `Close` |
 
 Pick an item on the left. Only that one becomes editable — everything else greys
@@ -109,6 +109,51 @@ matters.
 
 * **▭ areas** — drag inside to move, drag the white corner to resize.
 * **⦿ click points** — drag the dot onto the button.
+
+### Update 30: NPC menus now fall into place
+
+The Fisherman's new dark button stack falls as pages gain or lose choices. The
+macro now finds its visible white label/icon rows just before every click and
+uses an explicit page/action map — it never treats a Y coordinate as a label.
+The **Menu buttons — area** must cover the whole four-row root menu and the
+lower two-row bait menu: it scopes live detection so terminal/HUD text cannot
+be mistaken for a menu entry.
+
+| Page | Visible rows, top → bottom |
+|---|---|
+| Root (4) | Shop · Fishing Index · Job Stats · Nevermind |
+| Shop (3) | Buy Bait · Sell Fish · Nevermind |
+| Bait (2) | Basic Bait · Back |
+| Sale confirmation (2) | Confirm · Nevermind |
+
+So the second row is **Fishing Index** on Root but **Sell Fish** on Shop, and
+the bottom row is **Nevermind** except on Bait where it is **Back**. The macro
+waits for the full four-row root page, then confirms the live stack changes
+**4 → 3 → 2** while buying or selling. The menu box and four ordinal menu dots
+remain as a conservative fallback for older UI or an unusual display where the
+live stack cannot be proved.
+
+### Calibration reference-image slots
+
+The calibrator displays an optional reference picture when a PNG exists at
+`WINDOWS/assets/gui/calib/<slot>.png`. These are illustrations only: they do
+not become templates, are never sent anywhere, and an absent slot does not
+affect detection. Do **not** copy a live screenshot containing account or
+other personal details into the project.
+
+| Calibration addition | Exact optional PNG slot |
+|---|---|
+| 1st / top NPC row | `WINDOWS/assets/gui/calib/menu_item1.png` |
+| 2nd NPC row | `WINDOWS/assets/gui/calib/menu_item2.png` |
+| 3rd NPC row (new) | `WINDOWS/assets/gui/calib/menu_item3.png` |
+| 4th / bottom NPC row | `WINDOWS/assets/gui/calib/menu_last.png` |
+| Catch-dialogue header, yellow | `WINDOWS/assets/gui/calib/dialogue.png` |
+| Craft button, yellow | `WINDOWS/assets/gui/calib/craft.png` |
+
+The existing project already has the first, second, and bottom-row illustration
+slots. The three new names above are intentionally empty slots until a
+sanitised reference image is available; calibration itself still works without
+them.
 
 ### The reel bar band is worth your time
 
@@ -210,6 +255,13 @@ frame it, and the bot finds the fish by its *picture* instead of its color. A
 green box shows where it matches. Recapture it if you change your window size.
 It saves `fish_template.png` next to `config.json`.
 
+Update 30 also uses a broad yellow glow on the bottom catch/dialogue card and
+the Craft action. Both have their own optional captures: choose **Catch-dialogue
+header (yellow)** or **Craft button (yellow)**, then click a plain yellow part
+of that element. This is only needed when the built-in detection misses it; do
+not sample the white letters or black outline. Their optional reference-picture
+slots are `assets/gui/calib/dialogue.png` and `assets/gui/calib/craft.png`.
+
 (Drop reference pictures into `assets/gui/calib/` — `track.png`, `chest.png`,
 `progress.png`, `zone.png`, `zone_out.png`, `fish.png`, `fish_out.png` — to
 illustrate each one.)
@@ -217,15 +269,21 @@ illustrate each one.)
 **Re-shoot** retakes the screenshot (open the relevant dialogue in game first,
 so you can line things up against the real UI). **Save** writes to `config.json`.
 
-A good order: open the Fisherman's dialogue → Re-shoot → line up the menu box
-and the three menu dots → Save. The craft window needs its own pass, since it
-has to be open to see it.
+A good order: open the Fisherman's root dialogue → Re-shoot → line up
+**Interact** and, if the live detector ever needs fallback help, the **four**
+visible rows in order. On Update 30 the menu rows normally need no dots. The
+craft window and a rare recipe note need their own pass, since they must be
+open to calibrate their controls.
 
 ---
 
 ## Options
 
 Set in the app, or in `config.json` afterwards.
+
+The setup answers and calibration are saved when you continue, so they return
+on the next launch. **Advanced cooldowns** are also persisted when changed;
+Reset removes an override so a future code update can supply its new default.
 
 | Option | What it does |
 |---|---|
@@ -243,8 +301,9 @@ Set in the app, or in `config.json` afterwards.
 
 | Symptom | Likely cause |
 |---|---|
-| **Bar tracks the fish then drifts to one side and gives up; F2/F4 dead** | **Not running as administrator.** Roblox is elevated and the macro isn't, so Windows drops its input. **Right-click `easy_run.py` → Run as administrator** (or run it from an admin terminal). This is the #1 cause of "it gives up on the fish". |
-| `NPC dialogue never opened` | Out of interaction range, or the menu box needs calibrating. |
+| **Bar tracks the fish then drifts to one side and gives up; F2/F4 dead** | **Not running as administrator.** Roblox is elevated and the macro isn't, so Windows drops its input. Open an Administrator terminal and run `python easy_run.py`. This is the #1 cause of "it gives up on the fish". |
+| `NPC dialogue never opened` | Out of interaction range. On Update 30, make sure the button labels/icons are visible and not covered; on an older UI, calibrate the menu box. |
+| NPC menu is visibly open but the macro never chooses Shop | Update to the DPI-aware build and restart it. On a scaled 4K display, an older build could capture only the left logical half of Roblox while the menu sat in the physical right half. Keep **Menu buttons — area** around the full four-row / two-row menu envelope. |
 | `CRAFT window never opened` | The craft-button area is mis-calibrated, or another window overlaps it. |
 | Bot bites at nothing | The bite area reaches the player list in the top-right — shrink it, or remove red/pink cosmetics. |
 | Clicks land in the wrong place | Calibrate. The shipped positions assume a particular window size. |
@@ -252,7 +311,7 @@ Set in the app, or in `config.json` afterwards.
 | Tracks but never quite settles, worse on small zones; or night confuses zone/ground | Turn on the **zone track** box (see *Calibrate controls*). |
 | `bar never appeared` while a reel bar is plainly on screen | A **color capture is off** (most often the reel-bar track). On the latest build captures can't cause this, but if you're on an older one, **Reset to default** the captured colors. Also check the **zone track** box isn't cutting off the thin progress strip. |
 | `[warn] the Zone track box did not contain a full reel bar` | Your zone track box is too tight (cutting the progress strip). Redraw it a little taller to include the strip, or untick it. The bot keeps fishing via the Reel bar band meanwhile. |
-| Hotkeys do nothing | Run as administrator (right-click `easy_run.py` → *Run as administrator*, or use an admin terminal), or use the on-screen buttons. |
+| Hotkeys do nothing | Run `python easy_run.py` from an Administrator terminal, or use the on-screen buttons. |
 | Nothing works after editing `config.json` | Delete it — the defaults come back. |
 | `ModuleNotFoundError: No module named 'numpy'` | The libraries aren't installed. Both entry points install them automatically now, so make sure you're on the latest version. Otherwise run `pip install -r requirements.txt` yourself. |
 | pip installs, but packages are still missing | Your Python is probably too new for prebuilt downloads to exist yet. Python 3.12 is the safest choice. |

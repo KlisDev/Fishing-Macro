@@ -15,16 +15,10 @@ fishing spot ready, and one-time ``/dev/uinput`` permission
 from __future__ import annotations
 
 import argparse
-import os
+import datetime
 import sys
 import threading
 import time
-
-_HERE = os.path.dirname(os.path.abspath(__file__))
-_CORE = os.path.join(os.path.dirname(_HERE), "WINDOWS")  # shared core lives here
-sys.path.insert(0, _CORE)          # the shared bloxfish/ package + easy_run
-sys.path.insert(0, _HERE)          # local Linux backends
-
 
 def _patch_backends() -> None:
     """Substitute the Linux uinput + X11 backends into the shared engine.
@@ -85,7 +79,23 @@ def main() -> int:
     ap.add_argument("--now", action="store_true",
                     help="start immediately, don't wait for a hotkey")
     ap.add_argument("--debug", action="store_true", help="log while reeling")
+    ap.add_argument("--diag", action="store_true",
+                    help="save detector pixels after failures")
+    ap.add_argument("--record", action="store_true",
+                    help="save sampled reel strips while fishing")
+    ap.add_argument("--dev", action="store_true",
+                    help="debug + diag + record into one timestamped capture folder")
+    ap.add_argument("--config", default=None,
+                    help="isolated Sober config file (templates/logs sit beside it)")
     args = ap.parse_args()
+
+    # Establish Linux paths before ``_backend`` or any shared module imports.
+    from linux_runtime import configure_linux_runtime
+    configure_linux_runtime(args.config)
+
+    from preflight_linux import run_preflight
+    if not run_preflight(gui=False):
+        return 1
 
     try:
         _patch_backends()
@@ -96,11 +106,33 @@ def main() -> int:
         return 1
 
     import bloxfish.engine as E
-    from bloxfish.config import Config
+    from bloxfish.config import CONFIG_PATH, Config
 
     cfg = Config.load()
-    cfg.debug = args.debug or getattr(cfg, "debug", False)
-    engine = E.FishingEngine(cfg, log=print)
+    cfg.debug = args.debug or cfg.debug
+    cfg.diag = args.diag or cfg.diag
+    cfg.record = args.record or cfg.record
+    logfile = None
+    log = print
+    if args.dev:
+        cfg.debug = cfg.diag = cfg.record = True
+        capture = CONFIG_PATH.parent / (
+            "capture_" + datetime.datetime.now().strftime("%Y%m%d_%H%M%S"))
+        capture.mkdir(parents=True, exist_ok=True)
+        cfg.capture_dir = str(capture)
+        logfile = open(capture / "run.log", "a", encoding="utf-8")
+
+        def log(*parts):
+            line = " ".join(str(part) for part in parts)
+            print(line)
+            try:
+                logfile.write(line + "\n")
+                logfile.flush()
+            except Exception:                          # noqa: BLE001
+                pass
+        log(f"[dev] capturing Sober diagnostics to {capture}")
+
+    engine = E.FishingEngine(cfg, log=log)
     _install_hotkeys._eng = engine
 
     worker = {"t": None}
@@ -131,6 +163,9 @@ def main() -> int:
     try:
         while not quitting.is_set():
             time.sleep(0.1)
+            if (args.now or not armed or engine.safety_stopped) and (
+                    worker["t"] and not worker["t"].is_alive()):
+                break
     except KeyboardInterrupt:
         pass
     finally:
@@ -140,6 +175,11 @@ def main() -> int:
             engine.close()
         except Exception:                              # noqa: BLE001
             pass
+        if logfile is not None:
+            try:
+                logfile.close()
+            except Exception:                          # noqa: BLE001
+                pass
     return 0
 
 

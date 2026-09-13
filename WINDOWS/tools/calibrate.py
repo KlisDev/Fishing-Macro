@@ -42,7 +42,8 @@ def cmd_window(cfg: Config, screen: Screen) -> None:
     bite = win.sub(d.bite_left, d.bite_top, d.bite_right, d.bite_bottom)
     print(f"bar search  : {bar.width}x{bar.height} at ({bar.left},{bar.top})")
     print(f"bite ROI    : {bite.width}x{bite.height} at ({bite.left},{bite.top})"
-          f"  threshold {bite_threshold(bite, d):.0f}")
+          f"  min blob area {d.bite_min_area_frac * bite.width * bite.height:.0f}px"
+          f"  min max-dimension {d.bite_max_dim_frac * bite.width:.0f}px")
 
     for name, rect in (("bar search", bar), ("bite ROI", bite)):
         screen.grab(rect)

@@ -37,9 +37,8 @@ def _near(img: np.ndarray, ref, tol: int) -> np.ndarray:
     """Pixels within `tol` of the captured BGR `ref` on every channel.
 
     The opt-in per-machine color override (Calibrate -> Advanced). Only ever
-    used for the stable-colored elements -- the track background, the chest
-    tile, the progress fill -- never the zone or fish, which change color
-    during a fight and stay on their relational masks.
+    unioned into the relational detector for track, chest, progress, and both
+    visual states of the zone/fish. It never replaces the built-in mask.
     """
     b, g, r = _split(img)
     return ((np.abs(b - int(ref[0])) <= tol)
@@ -189,10 +188,14 @@ def find_chest(strip: np.ndarray, colors: Colors,
     while collecting and swaps to an open-chest icon afterwards.
     """
     cols = chest_mask(strip, colors).sum(axis=0)
-    xs = np.flatnonzero(cols > strip.shape[0] * 0.30)
-    if len(xs) < max(3, min_width):
+    present = cols > strip.shape[0] * 0.30
+    span = _row_span(present, max_gap=4, min_fill=0.55)
+    if span is None or (span[1] - span[0] + 1) < max(3, min_width):
         return None
-    return float(xs.min()), float(xs.max())
+    # Use one contiguous tile.  A broad per-machine capture can match a few
+    # warm sprite highlights elsewhere on the rail; min..max merged those
+    # separate blobs into a giant phantom chest centred between them.
+    return float(span[0]), float(span[1])
 
 
 def progress_mask(img: np.ndarray, c: Colors | None = None) -> np.ndarray:
@@ -779,6 +782,131 @@ def find_bite_marker(img: np.ndarray, colors: Colors, det: Detection,
 # NPC shop UI
 # --------------------------------------------------------------------------
 
+@dataclass(frozen=True)
+class MenuButton:
+    """A clickable centre of an Update 30 NPC menu row, relative to its grab."""
+
+    x: float
+    y: float
+
+
+def _find_menu_panels(img: np.ndarray) -> list[MenuButton]:
+    """Find the dark, full-width Update 30 button panels.
+
+    White text alone is a weak row signal: the mouse cursor over the water can
+    become a fake first row, and individual glyph strokes can form an evenly
+    spaced three-row pattern. The actual action panels are much more stable —
+    wide dark bands with a fixed button height. Prefer those whenever they are
+    visible, while retaining the label detector below as a compatibility
+    fallback for older UI themes and calibration previews.
+    """
+    h, w = img.shape[:2]
+    if h < 30 or w < 60:
+        return []
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    # Ocean/sky and the usual Fisherman backdrop are bright. A dialogue button
+    # stays dark even with transparency, while a cursor or text cannot fill
+    # nearly half of a menu row.
+    dark_per_row = (gray < 90).sum(axis=1)
+    active = dark_per_row >= max(30, int(w * 0.45))
+    active = cv2.morphologyEx(active.astype(np.uint8)[:, None],
+                              cv2.MORPH_CLOSE, np.ones((5, 1), np.uint8))[:, 0]
+    min_h = max(18, int(h * 0.09))
+    max_h = max(min_h + 1, int(h * 0.40))
+    panels: list[MenuButton] = []
+    start = None
+    for y, on in enumerate(np.r_[active.astype(bool), False]):
+        if on and start is None:
+            start = y
+        elif not on and start is not None:
+            end = y
+            if min_h <= end - start <= max_h:
+                # The calibrated envelope contains this panel; its horizontal
+                # centre is a label-independent and safely clickable target.
+                panels.append(MenuButton(x=w * 0.5, y=(start + end - 1) * 0.5))
+            start = None
+    return panels if len(panels) >= 2 else []
+
+
+def find_falling_menu_buttons(img: np.ndarray) -> list[MenuButton]:
+    """Find the Update 30 NPC button stack without relying on a saved box.
+
+    The new menu is a screen-space stack whose height changes with the number
+    of choices: `Basic Bait / Back` sits lower than the four-item root menu.
+    The old static "top button" therefore lands in empty space on short pages.
+    Rather than attempting OCR, use the high-contrast white labels/icons and
+    retain only two or more evenly-spaced rows in the lower-right UI region.
+    This is intentionally a *positive* detector: uncertain frames return an
+    empty list, letting the legacy calibrated targets remain the fallback.
+    """
+    h, w = img.shape[:2]
+    panels = _find_menu_panels(img)
+    if panels:
+        return panels
+    # The normal desktop UI is lower-right, but the supplied Update 30 footage
+    # proves that Roblox's UI scale can make the exact same stack fill most of
+    # the screen.  Scan the full possible panel region, then reject short
+    # white bands (scoreboard text) below instead of hard-coding a corner.
+    x0, x1 = int(w * 0.10), int(w * 0.98)
+    y0, y1 = int(h * 0.02), int(h * 0.99)
+    if x1 - x0 < 40 or y1 - y0 < 40:
+        return []
+
+    b, g, r = _split(img[y0:y1, x0:x1])
+    # Label/icon white stays bright even though the menu panels themselves are
+    # semi-transparent and take on whatever colour is behind the NPC.
+    white = (b > 185) & (g > 185) & (r > 185)
+    counts = white.sum(axis=1)
+    active = (counts >= max(7, int((x1 - x0) * 0.004))).astype(np.uint8)
+    # Text has holes between glyphs. Join those vertically, but not separate
+    # buttons (their centres are roughly 7-9% of the window height apart).
+    join = max(3, (h // 150) | 1)
+    active = cv2.morphologyEx(active[:, None], cv2.MORPH_CLOSE,
+                              np.ones((join, 1), np.uint8))[:, 0].astype(bool)
+
+    bands: list[MenuButton] = []
+    start = None
+    min_white = max(80, int(h * w * 0.00012))
+    for i, on in enumerate(np.r_[active, False]):
+        if on and start is None:
+            start = i
+        elif not on and start is not None:
+            end = i
+            if h * 0.008 <= end - start <= h * 0.16:
+                ys, xs = np.where(white[start:end])
+                # A player-list row can be white and evenly spaced too, but
+                # it is much narrower than even the shortest NPC action. This
+                # keeps the broad scan safe while allowing UI-scale changes.
+                wide_enough = (len(xs) and xs.max() - xs.min() + 1 >=
+                               max(30, int(w * 0.06)))
+                if len(xs) >= min_white and wide_enough:
+                    # Clicking on the label itself is a normal Roblox GUI
+                    # click, and is more portable than guessing panel edges.
+                    bands.append(MenuButton(
+                        x=float(x0 + np.median(xs)),
+                        y=float(y0 + start + np.median(ys)),
+                    ))
+            start = None
+
+    if len(bands) < 2:
+        return []
+    # Keep the longest run with *consistent* button spacing. A calibration or
+    # debug overlay can paint a wide white label immediately above the menu;
+    # accepting it as a fifth row shifts every live click by one. The real NPC
+    # stack has one repeated pitch, regardless of Roblox's UI scale.
+    best: list[MenuButton] = []
+    min_gap, max_gap = h * 0.035, h * 0.34
+    for first in range(len(bands) - 1):
+        for last in range(first + 2, len(bands) + 1):
+            candidate = bands[first:last]
+            gaps = [b.y - a.y for a, b in zip(candidate, candidate[1:])]
+            if (any(gap < min_gap or gap > max_gap for gap in gaps)
+                    or max(gaps) > min(gaps) * 1.35):
+                continue
+            if len(candidate) > len(best):
+                best = candidate
+    return best if len(best) >= 2 else []
+
 def menu_button_count(img: np.ndarray) -> int:
     """Number of NPC dialogue buttons visible in `img` (a grab of the menu ROI).
 
@@ -799,7 +927,17 @@ def menu_button_count(img: np.ndarray) -> int:
                and stats[i][4] > (img.shape[0] * img.shape[1]) * 0.012)
 
 
-def craft_window_open(img: np.ndarray, min_w_frac: float = 0.25) -> bool:
+def craft_button_mask(img: np.ndarray, c: Colors | None = None) -> np.ndarray:
+    """Warm-yellow Craft action, with an optional per-machine color sample."""
+    b, g, r = _split(img)
+    m = (r > 180) & (g > 150) & (b < 110)
+    if c is not None and c.cap_craft_on:
+        m = m | _near(img, c.cap_craft_bgr, c.cap_craft_tol)
+    return m
+
+
+def craft_window_open(img: np.ndarray, min_w_frac: float = 0.25,
+                      c: Colors | None = None) -> bool:
     """True if the CRAFT window's yellow **Craft button** is in `img`.
 
     `img` is a grab of the band where that button sits (lower-middle of the
@@ -814,12 +952,62 @@ def craft_window_open(img: np.ndarray, min_w_frac: float = 0.25) -> bool:
     and it is the thing we are about to click anyway, so seeing it is the right
     precondition. Measured 302-304 px wide against a ~768 px band.
     """
-    b, g, r = _split(img)
-    m = ((r > 180) & (g > 150) & (b < 110)).astype(np.uint8)
+    m = craft_button_mask(img, c).astype(np.uint8)
     if not m.any():
         return False
     n, _lbl, stats, _c = cv2.connectedComponentsWithStats(m, 8)
     return any(stats[i][2] > img.shape[1] * min_w_frac for i in range(1, n))
+
+
+def dialogue_header_mask(img: np.ndarray, c: Colors | None = None) -> np.ndarray:
+    """Warm-yellow Update 30 dialogue header, optionally widened by a sample."""
+    b, g, r = _split(img)
+    # The header is a left-to-right glow, not one flat swatch: its dim edge in
+    # a lossless Update 30 capture is only about BGR (11,64,81), while the
+    # centre reaches (59,237,255). Keep the colour relation broad enough to
+    # cover both ends; the long lower-screen span is the anti-false-positive
+    # guard, not a brittle single-pixel threshold.
+    m = ((r > 70) & (g > 50) & (b < 130)
+         & (r >= g) & (r > b + 30) & (g > b + 20))
+    if c is not None and c.cap_dialogue_on:
+        m = m | _near(img, c.cap_dialogue_bgr, c.cap_dialogue_tol)
+    # A bright green fishing-progress bar can otherwise satisfy the broad
+    # yellow relation after video compression. A true warm-yellow header is
+    # never greener than it is red, including a user-calibrated sample.
+    return m & (r >= g)
+
+
+def update30_dialogue_present(img: np.ndarray, c: Colors | None = None) -> bool:
+    """Whether the new bottom catch/dialogue card is visibly covering the UI.
+
+    Its broad yellow name/header strip is a stable witness. Restrict the scan
+    to the lower half and require a long horizontal run, which excludes the
+    small yellow HUD buttons and the CRAFT action button.
+    """
+    h, w = img.shape[:2]
+    mask = dialogue_header_mask(img, c)
+    y0, y1 = int(h * 0.52), int(h * 0.92)
+    min_width = max(20, int(w * 0.18))
+    # A valid card header is a band, not one coloured scanline. This excludes
+    # the fishing progress bar and horizontal item/HUD highlights, both of
+    # which previously made ``wait_popup_clear`` burn its full timeout before
+    # selling or buying bait.
+    min_header_rows = max(8, int(h * 0.008))
+    consecutive = 0
+    for y in range(y0, min(y1, h)):
+        span = _row_span(mask[y], max_gap=max(4, w // 240), min_fill=0.45)
+        # The player health/energy HUD has a similarly warm lower-left bar.
+        # A catch card's title is centred; accepting only the central 50% of
+        # the game keeps the intentionally broad glow mask from seeing the HUD.
+        centered = (span is not None and span[0] >= int(w * 0.25)
+                    and span[1] <= int(w * 0.75))
+        if centered and span[1] - span[0] + 1 >= min_width:
+            consecutive += 1
+            if consecutive >= min_header_rows:
+                return True
+        else:
+            consecutive = 0
+    return False
 
 
 def dialogue_overlay_frac(img: np.ndarray) -> float:

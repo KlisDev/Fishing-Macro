@@ -4,7 +4,7 @@ Both Linux entry points (``run_linux.py`` terminal, ``easy_run_linux.py`` GUI)
 call ``patch()`` once, before any engine is constructed. It replaces the backend
 names the code resolves at run time:
 
-  * ``bloxfish.engine.{Mouse, Keyboard, find_game_window}`` — the engine binds
+  * ``bloxfish.engine.{Mouse, Keyboard, find_game_window, focus_game_window}`` — the engine binds
     these from its own module globals when it builds them.
   * ``bloxfish.capture.find_game_window`` — the calibrator (``easy_run.py``)
     imports it lazily from ``capture`` when it takes its screenshot.
@@ -29,10 +29,14 @@ for _p in (_CORE, _HERE):
 def patch() -> None:
     import bloxfish.engine as engine
     import bloxfish.capture as capture
+    from bloxfish.debug import DEBUG
     from inputs_linux import Mouse, Keyboard
-    from find_window_linux import find_game_window
+    from find_window_linux import find_game_window, focus_game_window
+    from x11_overlay import create_x11_overlay
 
     engine.Mouse = Mouse
     engine.Keyboard = Keyboard
     engine.find_game_window = find_game_window
+    engine.focus_game_window = focus_game_window
     capture.find_game_window = find_game_window
+    DEBUG.register_overlay_factory(create_x11_overlay)

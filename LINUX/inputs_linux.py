@@ -155,14 +155,27 @@ class Mouse:
         self._ui.syn()
 
     def position(self) -> tuple[int, int]:
-        """Best-effort current cursor position (X11). Not needed by the reel or
-        the shop clicks — click_at drives move_to directly."""
+        """Best-effort current cursor position (X11).
+
+        The shared safety policy uses this to verify that Shift Lock actually
+        snapped the cursor before it allows a fishing cast. Close the short
+        lived Xlib connection every time: the check runs before casts, and a
+        leaked display connection would otherwise accumulate during a session.
+        """
+        dpy = None
         try:
             from Xlib import display
-            p = display.Display().screen().root.query_pointer()
+            dpy = display.Display()
+            p = dpy.screen().root.query_pointer()
             return int(p.root_x), int(p.root_y)
         except Exception:                              # noqa: BLE001
             return (0, 0)
+        finally:
+            if dpy is not None:
+                try:
+                    dpy.close()
+                except Exception:                      # noqa: BLE001
+                    pass
 
     def click_at(self, x: int, y: int, settle: float = 0.12,
                  hold: float = 0.05) -> None:

@@ -27,9 +27,8 @@ input just never arrives. The fishing zone gets no steering, drifts to whichever
 edge the game pulls it toward, and the fish escapes. The **same rule** is why
 **`F2`/`F4` do nothing** for some people — the global hotkey is blocked too.
 
-**Fix:** run the macro as administrator. **Right-click `easy_run.py` → *Run as
-administrator*** (say Yes to the popup), or right-click your terminal → *Run as
-administrator* and run `python easy_run.py`.
+**Fix:** open PowerShell or Windows Terminal with **Run as administrator**,
+change to the `WINDOWS` folder, and run `python easy_run.py`.
 
 There is also a rarer, intermittent version of the same symptom — the zone jams
 against a wall for one reel out of several even when input generally works,

@@ -15,6 +15,7 @@ like, use it from wherever you like.
 from __future__ import annotations
 
 import threading
+import time
 from dataclasses import dataclass
 
 import numpy as np
@@ -94,6 +95,78 @@ class Screen:
         self._local = threading.local()
 
 
+def _matching_game_windows(title: str):
+    """Return real Roblox-client candidates, largest first.
+
+    This is shared by locating and activating the game.  In particular, a
+    browser tab whose title merely contains ``Roblox`` must not become the
+    foreground window just because the GUI was started from a browser.
+    """
+    import pygetwindow as gw
+
+    wanted = (title or "Roblox").lower()
+    matches = []
+    for window in gw.getWindowsWithTitle(title):
+        try:
+            candidate = (window.title or "").strip().lower()
+        except Exception:                           # noqa: BLE001
+            continue
+        if candidate != wanted and not candidate.startswith(wanted + " "):
+            continue
+        if window.width > 400 and window.height > 300:
+            matches.append(window)
+    return sorted(matches, key=lambda window: window.width * window.height,
+                  reverse=True)
+
+
+def focus_game_window(title: str) -> bool:
+    """Bring the selected Roblox client to the foreground before input.
+
+    A global F2 hook can fire while this app, a terminal, or another overlay
+    owns the foreground.  ``SendInput`` then still succeeds from Python but
+    reaches that other window, which looks exactly like a failed F2: the log
+    says the loop started but the cast meter never charges.  Focus the exact
+    client selected by :func:`find_game_window` before sending shift-lock,
+    movement, or mouse input.
+
+    Windows may decline foreground activation in edge cases, so this returns a
+    confirmation rather than assuming ``activate()`` worked.  The caller can
+    leave the loop alive and give an actionable log message instead of silently
+    misdirecting input.
+    """
+    try:
+        matches = _matching_game_windows(title)
+        if not matches:
+            return False
+        window = matches[0]
+        if window.isMinimized:
+            window.restore()
+        hwnd = int(window._hWnd)
+        # pygetwindow's activate handles the normal case.  The direct calls
+        # make the request durable on systems where its wrapper returns before
+        # the compositor has finished switching foreground ownership.
+        window.activate()
+        try:
+            import ctypes
+            user32 = ctypes.windll.user32
+            user32.BringWindowToTop(hwnd)
+            user32.SetForegroundWindow(hwnd)
+        except Exception:                           # noqa: BLE001
+            pass
+        deadline = time.perf_counter() + 0.35
+        while time.perf_counter() < deadline:
+            try:
+                import ctypes
+                if int(ctypes.windll.user32.GetForegroundWindow()) == hwnd:
+                    return True
+            except Exception:                       # noqa: BLE001
+                break
+            time.sleep(0.02)
+    except Exception:                               # noqa: BLE001
+        pass
+    return False
+
+
 def find_game_window(title: str, screen: Screen) -> tuple[Rect, bool]:
     """Locate the game window. Returns (rect, found).
 
@@ -109,23 +182,9 @@ def find_game_window(title: str, screen: Screen) -> tuple[Rect, bool]:
     shaved off so the border never leaks into the color masks.
     """
     try:
-        import pygetwindow as gw
-
-        wanted = (title or "Roblox").lower()
-        matches = []
-        for w in gw.getWindowsWithTitle(title):
-            try:
-                t = (w.title or "").strip().lower()
-            except Exception:                       # noqa: BLE001
-                continue
-            # The real client is titled exactly "Roblox". Anything longer is a
-            # browser tab or an explorer window that merely mentions it.
-            if t != wanted and not t.startswith(wanted + " "):
-                continue
-            if w.width > 400 and w.height > 300:
-                matches.append(w)
+        matches = _matching_game_windows(title)
         if matches:
-            w = max(matches, key=lambda w: w.width * w.height)
+            w = matches[0]
             if w.isMinimized:
                 w.restore()
             return Rect(w.left + 8, w.top + 8,

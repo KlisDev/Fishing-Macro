@@ -7,7 +7,7 @@ Two renderers fed by one event bus:
     artifact — usually more useful than the video.
   * ``OverlayRenderer`` — a transparent, click-through, always-on-top window that
     frames each detection box and rings each click, so they show up in a screen
-    recording. **Windows GUI only** for now.
+    recording.  Platform launchers can register an equivalent renderer.
 
 The crucial safety property: the overlay draws each box's frame a few pixels
 *OUTSIDE* its detection rectangle. The macro reads the screen with `mss`, which
@@ -112,9 +112,17 @@ class OverlayRenderer:
         self.win = tk.Toplevel(tk_parent)
         self.win.overrideredirect(True)
         self.win.attributes("-topmost", True)
-        sw = self.win.winfo_screenwidth()
-        sh = self.win.winfo_screenheight()
-        self.win.geometry(f"{sw}x{sh}+0+0")
+        # Cover the full virtual desktop, not only the primary display.  Every
+        # detector/click coordinate is absolute desktop space, so the previous
+        # 0,0-primary canvas drew nothing useful when Roblox was on a monitor to
+        # the left (negative x) or beyond the primary monitor's bounds.
+        import ctypes
+        user32 = ctypes.windll.user32
+        self._ox = int(user32.GetSystemMetrics(76))     # SM_XVIRTUALSCREEN
+        self._oy = int(user32.GetSystemMetrics(77))     # SM_YVIRTUALSCREEN
+        sw = int(user32.GetSystemMetrics(78))           # SM_CXVIRTUALSCREEN
+        sh = int(user32.GetSystemMetrics(79))           # SM_CYVIRTUALSCREEN
+        self.win.geometry(f"{sw}x{sh}{self._ox:+d}{self._oy:+d}")
         self.win.configure(bg=self.KEY)
         self.win.attributes("-transparentcolor", self.KEY)   # Windows-only
         self.canvas = tk.Canvas(self.win, bg=self.KEY, highlightthickness=0,
@@ -144,17 +152,20 @@ class OverlayRenderer:
     # -- fed from the debug bus (any thread) --
     def box(self, name: str, rect) -> None:
         with self._lock:
-            self._boxes[name] = (rect.left, rect.top, rect.right, rect.bottom,
+            self._boxes[name] = (rect.left - self._ox, rect.top - self._oy,
+                                 rect.right - self._ox, rect.bottom - self._oy,
                                  time.perf_counter() + self.TTL)
 
     def dot(self, name: str, x: float, y: float) -> None:
         with self._lock:
-            self._dots[name] = (int(x), int(y), time.perf_counter() + self.TTL)
+            self._dots[name] = (int(x) - self._ox, int(y) - self._oy,
+                                time.perf_counter() + self.TTL)
 
     def mark(self, name: str, x0: float, x1: float, y: float) -> None:
         """A bracket/tick at a detected x-range, y sits OUTSIDE the read strip."""
         with self._lock:
-            self._marks[name] = (int(x0), int(x1), int(y),
+            self._marks[name] = (int(x0) - self._ox, int(x1) - self._ox,
+                                 int(y) - self._oy,
                                  time.perf_counter() + self.TTL)
 
     def _label(self, x: int, y: int, text: str, col: str, anchor="w") -> None:
@@ -235,7 +246,23 @@ class DebugBus:
     def __init__(self) -> None:
         self.enabled = False
         self._log: LogRenderer | None = None
-        self._overlay: OverlayRenderer | None = None
+        self._overlay: object | None = None
+        self._overlay_factory = None
+
+    def register_overlay_factory(self, factory) -> None:
+        """Register a platform renderer before a debug session is armed.
+
+        The shared Windows renderer remains the fallback.  Linux registers its
+        X11 Shape overlay through this small seam instead of copying the debug
+        bus or teaching the core about uinput/X11 details.
+        """
+        if self.enabled:
+            raise RuntimeError("cannot replace the debug overlay while it is active")
+        self._overlay_factory = factory
+
+    @property
+    def overlay_visible(self) -> bool:
+        return self._overlay is not None
 
     # -- hot-path hooks --
     def box(self, name: str, rect) -> None:
@@ -277,13 +304,17 @@ class DebugBus:
             self._log.event(tag, msg, kv)
 
     # -- control (call arm/disarm on the GUI thread when using an overlay) --
-    def arm(self, overlay_parent=None, out_dir=None):
+    def arm(self, overlay_parent=None, out_dir=None, *, show_overlay: bool | None = None):
         if self.enabled:
             return self._log.path if self._log else None
         self._log = LogRenderer(out_dir)
-        if overlay_parent is not None:
+        if show_overlay is None:
+            show_overlay = overlay_parent is not None
+        if show_overlay:
             try:
-                self._overlay = OverlayRenderer(overlay_parent)
+                factory = self._overlay_factory
+                self._overlay = (factory(overlay_parent) if factory is not None
+                                 else OverlayRenderer(overlay_parent))
             except Exception as exc:                   # noqa: BLE001
                 self._log.line(f"[overlay unavailable: {exc}]")
                 self._overlay = None

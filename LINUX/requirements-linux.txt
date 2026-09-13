@@ -9,7 +9,7 @@ pillow>=10.0
 
 # Linux input + window backend (LINUX/):
 evdev>=1.6            # uinput virtual mouse/keyboard
-python-xlib>=0.33     # locate the Sober window, read cursor position
+python-xlib>=0.33     # locate/focus Sober and render the X Shape F8 hitboxes
 pynput>=1.7           # F2/F4 global hotkeys on X11
 
 # GUI (easy_run_linux.py) — the full setup wizard, calibrate, colour eyedropper,

@@ -144,7 +144,7 @@ def main() -> int:
     ap.add_argument("--config", default=None)
     args = ap.parse_args()
 
-    cfg = Config.load(args.config)
+    cfg = Config.load(Path(args.config) if args.config else None)
     if args.debug:
         cfg.debug = True
     if args.diag:
@@ -248,7 +248,8 @@ def main() -> int:
     try:
         while not quitting.is_set():
             time.sleep(0.1)
-            if (args.now or keyboard is None) and worker and not worker.is_alive():
+            if ((args.now or keyboard is None or engine.safety_stopped)
+                    and worker and not worker.is_alive()):
                 break
     except KeyboardInterrupt:
         pass

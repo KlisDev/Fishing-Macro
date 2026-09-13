@@ -14,23 +14,21 @@ requirements-linux.txt, and the one-time /dev/uinput permission
 """
 from __future__ import annotations
 
-import os
 import sys
-
-_HERE = os.path.dirname(os.path.abspath(__file__))
-_CORE = os.path.join(os.path.dirname(_HERE), "WINDOWS")  # shared core + easy_run
-sys.path.insert(0, _CORE)
-sys.path.insert(0, _HERE)
-
-# Tell easy_run's bootstrap not to run the Windows-oriented dependency install —
-# on Linux the deps come from requirements-linux.txt. Must be set before the
-# import of easy_run below (its _boot() runs at import time).
-os.environ.setdefault("BLOXFISH_NO_BOOT", "1")
 
 
 def main() -> int:
     if sys.platform == "win32":
         print("This is the Linux entry point — run easy_run.py on Windows.")
+        return 1
+
+    # This must precede every shared import: it isolates Sober calibration,
+    # assets, templates and diagnostics from the Windows profile.
+    from linux_runtime import configure_linux_runtime
+    configure_linux_runtime()
+
+    from preflight_linux import run_preflight
+    if not run_preflight(gui=True):
         return 1
 
     from _backend import patch
@@ -42,9 +40,8 @@ def main() -> int:
         print("  2) sudo bash LINUX/install-udev.sh   (then log out and back in)")
         return 1
 
-    # Import AFTER patching so the App builds engines with the Linux backends.
-    # Construct App directly rather than easy_run.main(), which would re-run the
-    # Windows dependency check.
+    # Import AFTER context + backend patching so App uses Linux paths, Sober
+    # focus/uinput, and the X11 F8 hitbox overlay from its first construction.
     import easy_run
     app = easy_run.App()
     app.protocol("WM_DELETE_WINDOW", app._close)
