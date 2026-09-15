@@ -34,7 +34,7 @@ else:
 # afternoon is debugging a bug report from a build that already has the fix.
 # Patch iteration only. A confirmed, fully adapted Update 30/NPC release is
 # reserved for the next minor version.
-VERSION = "1.8.1.1.36"
+VERSION = "1.8.1.1.37"
 
 
 @dataclass
@@ -619,13 +619,15 @@ class Shop:
     # NPC interaction pushes the character to its own perimeter position.
     # Never try to cancel that push with W: a fixed axis is a chord once the
     # character is even slightly off the NPC's radial line. First try Interact
-    # from the pushed position, then use only one very short S probe if needed.
+    # from the pushed position, then use at most two very short S probes if
+    # needed.
     walk_back_tap: float = 0.10     # S probe to reacquire interaction range
     approach_wait: float = 1.2      # after tapping S, before clicking Interact
     direct_dialog_timeout: float = 0.9  # direct Interact -> root menu witness
-    # Number of S probes after the no-movement Interact attempt. More probes
-    # mean more angular drift, so one is the deliberately safe default.
-    max_approach_attempts: int = 1
+    # Number of S probes after the no-movement Interact attempt. A second short
+    # probe covers a marginal starting position; more would reintroduce angular
+    # drift, so two is a deliberately bounded default.
+    max_approach_attempts: int = 2
     poll: float = 0.08              # how often to re-check a UI state
 
     # Give up on buying after this many consecutive failures.

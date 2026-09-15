@@ -645,8 +645,9 @@ def open_npc_dialogue(engine) -> bool:
 
     The NPC push changes both the character position and camera, so an S key
     is not a durable "walk back to the NPC" direction. First test Interact from
-    the position Roblox left us in. Only when that fails do one tiny S probe,
-    then confirm the root menu. Never dead-reckon or compensate with W.
+    the position Roblox left us in. Only when that fails do at most two tiny S
+    probes, confirming the root menu after each. Never dead-reckon or
+    compensate with W.
     """
     cfg = engine.cfg.shop
     m, kb, win, log = engine.mouse, engine.keyboard, engine.window, engine.log

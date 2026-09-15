@@ -16,10 +16,10 @@ from bloxfish.config import Config
 
 
 class ConfigRegressionTests(unittest.TestCase):
-    def test_npc_reacquisition_defaults_to_one_short_probe(self) -> None:
+    def test_npc_reacquisition_defaults_to_two_bounded_short_probes(self) -> None:
         cfg = Config()
         self.assertEqual(cfg.shop.walk_back_tap, 0.10)
-        self.assertEqual(cfg.shop.max_approach_attempts, 1)
+        self.assertEqual(cfg.shop.max_approach_attempts, 2)
         self.assertEqual(cfg.shop.direct_dialog_timeout, 0.9)
 
     def test_menu_page_settle_default_covers_the_falling_row_animation(self) -> None:
@@ -393,9 +393,9 @@ class VisionRegressionTests(unittest.TestCase):
              mock.patch.object(shop, "dialogue_overlay_frac", return_value=0.61):
             self.assertFalse(shop.popup_up(engine))
 
-    def test_npc_return_uses_one_short_adjustable_s_probe(self) -> None:
+    def test_npc_return_uses_two_bounded_short_adjustable_s_probes(self) -> None:
         self.assertEqual(Config().shop.walk_back_tap, 0.10)
-        self.assertEqual(Config().shop.max_approach_attempts, 1)
+        self.assertEqual(Config().shop.max_approach_attempts, 2)
 
     def test_modern_menu_witness_rejects_unaligned_nearby_highlights(self) -> None:
         """Two nearby water/cosmetic marks must not block a shop route."""
@@ -407,7 +407,7 @@ class VisionRegressionTests(unittest.TestCase):
         self.assertEqual(shop._coherent_menu_stack(false_marks, roi), [])
         self.assertEqual(shop._coherent_menu_stack(root_rows, roi), root_rows)
 
-    def test_npc_dialogue_tries_without_walking_before_one_s_probe(self) -> None:
+    def test_npc_dialogue_tries_without_walking_before_two_s_probes(self) -> None:
         class FakeMouse:
             def move_to(self, *_point):
                 pass
@@ -446,12 +446,119 @@ class VisionRegressionTests(unittest.TestCase):
              mock.patch.object(shop, "set_rod"), \
              mock.patch.object(shop, "set_shift_lock"), \
              mock.patch.object(shop, "_abs", return_value=(0, 0)), \
-             mock.patch.object(shop, "wait_for_menu_page", side_effect=[False, True]):
+             mock.patch.object(shop, "wait_for_menu_page", side_effect=[False, False, True]):
             self.assertTrue(shop.open_npc_dialogue(engine))
 
-        self.assertEqual(engine.keyboard.taps, [(shop.SC_S, 0.10)])
+        self.assertEqual(engine.keyboard.taps,
+                         [(shop.SC_S, 0.10), (shop.SC_S, 0.10)])
         self.assertTrue(engine._at_npc)
         self.assertTrue(engine._npc_repositioned)
+
+    def test_partial_dialogue_after_first_probe_never_uses_second_s_probe(self) -> None:
+        """A partial menu after probe one is still a no-movement boundary."""
+        class FakeMouse:
+            def move_to(self, *_point):
+                pass
+
+            def click_at(self, *_point):
+                pass
+
+        class FakeKeyboard:
+            def __init__(self):
+                self.taps = []
+
+            def tap(self, key, hold):
+                self.taps.append((key, hold))
+
+        class FakeEngine:
+            cfg = Config()
+            window = object()
+
+            def __init__(self):
+                self.mouse = FakeMouse()
+                self.keyboard = FakeKeyboard()
+                self._at_npc = False
+                self._npc_repositioned = False
+                self.lines = []
+
+            def _alive(self):
+                return True
+
+            def _sleep(self, _seconds):
+                pass
+
+            def log(self, line):
+                self.lines.append(line)
+
+        engine = FakeEngine()
+        calls = iter(((False, False), (False, True)))
+
+        def page_wait(_engine, _page, _timeout, *, saw_dialogue=None):
+            result, saw = next(calls)
+            if saw_dialogue is not None:
+                saw_dialogue[0] = saw
+            return result
+
+        with mock.patch.object(shop, "wait_popup_clear"), \
+             mock.patch.object(shop, "in_dialogue", return_value=False), \
+             mock.patch.object(shop, "set_rod"), \
+             mock.patch.object(shop, "set_shift_lock"), \
+             mock.patch.object(shop, "_abs", return_value=(0, 0)), \
+             mock.patch.object(shop, "wait_for_menu_page", side_effect=page_wait), \
+             mock.patch.object(shop, "interaction_safety_guard", return_value=True):
+            self.assertFalse(shop.open_npc_dialogue(engine))
+
+        self.assertEqual(engine.keyboard.taps, [(shop.SC_S, 0.10)])
+        self.assertTrue(any("stopping further movement" in line
+                            for line in engine.lines))
+
+    def test_npc_dialogue_gives_up_after_two_true_no_dialogue_probes(self) -> None:
+        """The extra recovery probe is bounded; it must never turn into a walk."""
+        class FakeMouse:
+            def move_to(self, *_point):
+                pass
+
+            def click_at(self, *_point):
+                pass
+
+        class FakeKeyboard:
+            def __init__(self):
+                self.taps = []
+
+            def tap(self, key, hold):
+                self.taps.append((key, hold))
+
+        class FakeEngine:
+            cfg = Config()
+            window = object()
+
+            def __init__(self):
+                self.mouse = FakeMouse()
+                self.keyboard = FakeKeyboard()
+                self._at_npc = False
+                self._npc_repositioned = False
+
+            def _alive(self):
+                return True
+
+            def _sleep(self, _seconds):
+                pass
+
+            def log(self, _line):
+                pass
+
+        engine = FakeEngine()
+        with mock.patch.object(shop, "wait_popup_clear"), \
+             mock.patch.object(shop, "in_dialogue", return_value=False), \
+             mock.patch.object(shop, "set_rod"), \
+             mock.patch.object(shop, "set_shift_lock"), \
+             mock.patch.object(shop, "_abs", return_value=(0, 0)), \
+             mock.patch.object(shop, "wait_for_menu_page", return_value=False), \
+             mock.patch.object(shop, "interaction_safety_guard", return_value=True):
+            self.assertFalse(shop.open_npc_dialogue(engine))
+
+        self.assertEqual(engine.keyboard.taps,
+                         [(shop.SC_S, 0.10), (shop.SC_S, 0.10)])
 
     def test_visible_root_dialogue_is_reused_without_interact_or_s_movement(self) -> None:
         class FakeMouse:

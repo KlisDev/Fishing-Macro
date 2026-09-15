@@ -422,7 +422,7 @@ hands** with its hotbar key. So the purchase does:
 ```
 rod OFF  (hotbar key)      <- clears the lock, before any movement
 Interact try                 <- use the pushed position first
-S        one short range probe only if Interact misses
+S        up to two short range probes only if Interact misses
 Shift    release shift lock
 ... Interact / Shop / Buy Bait / Basic Bait / + / Craft / Back / Nevermind ...
 wait     ~1.5 s post-dismiss lock
@@ -542,9 +542,9 @@ angular error.
 
 F2 therefore opens and immediately closes one confirmed NPC dialogue first.
 Roblox's own push is the fishing-position reset; the macro sends **no forward
-walk**. Later shop visits try Interact without moving, then use at most one
-small `S` range probe only when the dialogue is absent. A missing dialogue
-after that probe fails the shop route rather than accumulating movement.
+walk**. Later shop visits try Interact without moving, then use at most two
+small `S` range probes only when the dialogue is absent. A missing dialogue
+after those probes fails the shop route rather than accumulating movement.
 
 ### Getting in and out
 
@@ -563,7 +563,7 @@ starting with it off, and drives it to whatever each phase needs:
 ```
 start (at NPC, lock OFF)   Interact, Nevermind          -> pushed fishing position
                            Shift->ON                     -> fishing
-buy                        Interact, then one small S probe only if needed
+buy                        Interact, then up to two small S probes only if needed
                            Shift->OFF   (cursor freed)
                            Interact, Shop, Buy Bait, Basic Bait,
                            +, Craft, Back, Nevermind
