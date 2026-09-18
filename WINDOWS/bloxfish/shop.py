@@ -275,8 +275,7 @@ def interaction_safety_guard() -> bool:
     Windows and Sober/X11 both expose a real desktop cursor position and send
     scan-code input.  They therefore share the same safety contract: a visible
     dialogue prevents movement, and fishing starts only after Shift Lock's
-    cursor snap has been observed.  Test doubles without a position method
-    retain their existing permissive fallback; live backends do not.
+    cursor snap has been observed. Missing cursor observations fail closed.
     """
     return True
 
@@ -290,15 +289,20 @@ def _shift_lock_cursor_position(engine) -> tuple[int, int] | None:
     """Return the physical cursor position when the backend can observe it."""
     position = getattr(engine.mouse, "position", None)
     if not callable(position):
-        # Small test doubles (and the separately validated Linux backend) may
-        # not implement this observation.  The real Windows backend always
-        # does, so this never weakens a live Windows run.
         return None
     try:
         x, y = position()
         return int(x), int(y)
     except Exception:                              # noqa: BLE001
         return None
+
+
+def _shift_lock_geometry(engine) -> tuple[int, int, int]:
+    """Desktop centre and tolerance, independent of the Interact click point."""
+    window = engine.window
+    cx, cy = _abs(window, (0.5, 0.5))
+    tolerance = max(24, int(min(window.width, window.height) * 0.03))
+    return cx, cy, tolerance
 
 
 def _shift_lock_centered(engine, position: tuple[int, int] | None = None) -> bool:
@@ -314,13 +318,12 @@ def _shift_lock_centered(engine, position: tuple[int, int] | None = None) -> boo
         return True
     point = position if position is not None else _shift_lock_cursor_position(engine)
     if point is None:
-        return True
+        return False
     try:
         x, y = point
-        cx, cy = _abs(engine.window, engine.cfg.shop.center)
+        cx, cy, tolerance = _shift_lock_geometry(engine)
         # A 3%-of-window envelope accepts Windows' DPI/input rounding while
         # remaining far tighter than the distance from any dialogue button.
-        tolerance = max(24, int(min(engine.window.width, engine.window.height) * 0.03))
         return abs(x - cx) <= tolerance and abs(y - cy) <= tolerance
     except Exception:                              # noqa: BLE001
         return False
@@ -346,8 +349,8 @@ def set_shift_lock(engine, on: bool) -> bool:
     # a dialogue. Both supported runtimes use this measured scan-code press.
     # Looking only at the cursor *after* Shift was tapped produced a false
     # positive: the preceding Interact click itself happens at the screen
-    # centre, so a rejected Shift press could look successful.  For a live
-    # Windows backend require an observed snap from away from centre to centre.
+    # centre, so a rejected Shift press could look successful. Both supported
+    # backends require an observed snap from away from centre to centre.
     # If it cannot be proved, do not cast with a free cursor.
     before = (_shift_lock_cursor_position(engine)
               if on and interaction_safety_guard() else None)
@@ -358,24 +361,28 @@ def set_shift_lock(engine, on: bool) -> bool:
         engine._shift_lock_verified = True
         return True
     after = _shift_lock_cursor_position(engine)
-    can_observe = callable(getattr(engine.mouse, "position", None))
-    verified = (_shift_lock_centered(engine, after)
-                and (not can_observe
-                     or (before is not None
-                         and not _shift_lock_centered(engine, before))))
+    verified = (before is not None and after is not None
+                and _shift_lock_centered(engine, after)
+                and not _shift_lock_centered(engine, before))
     engine._shift_lock_verified = verified
     if verified:
         engine.log("[input] Shift Lock ON — centre cursor confirmed")
         return True
     # Do not let an unreceived toggle turn into a stale internal "on" state.
     engine._shift_lock = False
-    reason = ("the cursor was already centred before the tap"
-              if can_observe and before is not None
-              and _shift_lock_centered(engine, before)
-              else "the cursor did not snap to centre")
-    engine.log("[input] Shift Lock was not verified (" + reason + ") — "
-               "refusing to fish. Enable Roblox's Shift Lock Switch in Settings, "
-               "leave the current lock OFF before F2, then press F2 again.")
+    if before is None or after is None:
+        reason = "the cursor position could not be read"
+    elif _shift_lock_centered(engine, before):
+        reason = "the cursor was already centred before the tap"
+    else:
+        reason = "the cursor did not snap to centre"
+    cx, cy, tolerance = _shift_lock_geometry(engine)
+    engine.log(f"[input] Could not verify Shift Lock ({reason}) — "
+               f"before={before}, after={after}, expected=({cx}, {cy}), "
+               f"tolerance={tolerance}px; refusing to fish. "
+               "Check Roblox focus and Shift Lock Switch in Settings; "
+               "leave the current lock OFF before F2, then press F2 again. "
+               "The Interact click point does not control this check.")
     return False
 
 

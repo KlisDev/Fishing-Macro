@@ -34,7 +34,7 @@ else:
 # afternoon is debugging a bug report from a build that already has the fix.
 # Patch iteration only. A confirmed, fully adapted Update 30/NPC release is
 # reserved for the next minor version.
-VERSION = "1.8.1.1.37"
+VERSION = "1.8.1.1.38"
 
 
 @dataclass
@@ -551,7 +551,7 @@ class Shop:
     # *centres* of each button, not wherever the cursor happened to sit in the
     # recording — several of those observed positions were within a pixel or two
     # of a button's top edge.
-    center: tuple = (0.5000, 0.5107)        # (960,527) Interact / screen centre
+    center: tuple = (0.5000, 0.5107)        # Interact click only; not Shift Lock centre
     # These four dots are deliberately *ordinal*, not semantic. Update 30
     # reuses a row position for a different label after a click; shop.py owns
     # the page/action map and normally finds each live row itself.

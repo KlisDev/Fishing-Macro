@@ -111,10 +111,18 @@ warns rather than assuming injected input reached Roblox.
 Sober uses the same interaction safeguards as Windows. Enable Roblox's **Shift
 Lock Switch**, leave the current lock off before F2, and let the macro change
 it for dialogue/fishing phases. Before a cast it requires the X11 cursor to
-have actually snapped to the calibrated centre; otherwise it stops instead of
+have actually snapped to the game window's centre; otherwise it stops instead of
 fishing with a free cursor. A dialogue is accepted only when its visible action
 rows form a properly spaced vertical stack, so unrelated bright pixels cannot
 block a necessary NPC-range probe.
+
+Shift Lock verification is independent of the calibrated **Interact click point**
+(`shop.center`). Keep that point on the actual Interact prompt; do not change it
+to `0.5107` to satisfy Shift Lock. Update older builds that coupled these two
+positions. If you used that workaround, recalibrate Interact to the real prompt.
+Failed starts now return to idle, allowing another F2 attempt. Leave the current
+lock off before retrying. Cursor-query failures stop verification; the diagnostic
+message includes the before/after positions, expected centre, and tolerance.
 
 ## Privacy and bug reports
 

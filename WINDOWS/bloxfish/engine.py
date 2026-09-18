@@ -1121,7 +1121,15 @@ class FishingEngine:
         try:
             self._run_locked()
         finally:
-            self._run_lock.release()
+            # Startup can return or raise before the fishing loop is reached.
+            # Only the worker that acquired the lock owns this cleanup.
+            try:
+                self.mouse.release()
+                self.log(self.stats.summary())
+            finally:
+                self.running = False
+                self._shift_lock_verified = False
+                self._run_lock.release()
 
     def _run_locked(self) -> None:
         self.running = True
@@ -1168,21 +1176,16 @@ class FishingEngine:
             if not shop_mod.enter_fishing_stance(self):
                 self.stop()
                 return
-        try:
-            while self._alive():
-                # One cycle is wrapped so a transient fault (a failed grab, the
-                # window moving, a detector hiccup) heals into a recast instead
-                # of killing the whole session. Only an explicit stop ends it.
-                try:
-                    self._cycle()
-                except Exception as exc:  # noqa: BLE001 - deliberately broad
-                    self.mouse.release()
-                    self.log(f"[warn] cycle error: {exc!r} — recovering")
-                    self._sleep(self.cfg.timing.error_recovery)
-        finally:
-            self.mouse.release()
-            self.running = False
-            self.log(self.stats.summary())
+        while self._alive():
+            # One cycle is wrapped so a transient fault (a failed grab, the
+            # window moving, a detector hiccup) heals into a recast instead
+            # of killing the whole session. Only an explicit stop ends it.
+            try:
+                self._cycle()
+            except Exception as exc:  # noqa: BLE001 - deliberately broad
+                self.mouse.release()
+                self.log(f"[warn] cycle error: {exc!r} — recovering")
+                self._sleep(self.cfg.timing.error_recovery)
 
     def _cycle(self) -> None:
         """A single cast -> reel -> catch pass. Always returns to the caller so

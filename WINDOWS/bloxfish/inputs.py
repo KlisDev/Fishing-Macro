@@ -212,7 +212,8 @@ class Mouse:
 
     def position(self) -> tuple[int, int]:
         pt = wintypes.POINT()
-        _user32.GetCursorPos(ctypes.byref(pt))
+        if not _user32.GetCursorPos(ctypes.byref(pt)):
+            raise OSError("GetCursorPos failed; cursor position is unavailable")
         return int(pt.x), int(pt.y)
 
     def click_at(self, x: int, y: int, settle: float = 0.12,

@@ -704,7 +704,7 @@ CALIB_GUIDES = {
         "check": "Correct: every visible dialogue button fits in the box, including the bottom Nevermind or Back row.",
     },
     "center": {
-        "purpose": "This is the point used to interact with the Fisherman.",
+        "purpose": "This point clicks the Fisherman's Interact prompt. Shift Lock verification uses the game window's centre separately.",
         "do": "Stand at the NPC, show the Interact prompt, and drag the point to the middle of that prompt.",
         "avoid": "Do not use the middle of the screen unless it exactly matches the live Interact prompt.",
         "check": "Correct: the point lands on the prompt's active centre when you are in NPC range.",

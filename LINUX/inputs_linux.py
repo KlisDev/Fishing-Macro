@@ -155,7 +155,7 @@ class Mouse:
         self._ui.syn()
 
     def position(self) -> tuple[int, int]:
-        """Best-effort current cursor position (X11).
+        """Current cursor position (X11); raise if it cannot be observed.
 
         The shared safety policy uses this to verify that Shift Lock actually
         snapped the cursor before it allows a fishing cast. Close the short
@@ -168,8 +168,8 @@ class Mouse:
             dpy = display.Display()
             p = dpy.screen().root.query_pointer()
             return int(p.root_x), int(p.root_y)
-        except Exception:                              # noqa: BLE001
-            return (0, 0)
+        except Exception as exc:                       # noqa: BLE001
+            raise OSError("X11 cursor position is unavailable") from exc
         finally:
             if dpy is not None:
                 try:

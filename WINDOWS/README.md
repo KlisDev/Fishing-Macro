@@ -299,6 +299,24 @@ Reset removes an override so a future code update can supply its new default.
 
 ## Troubleshooting
 
+### Shift Lock could not be verified
+
+Update to the latest build before changing calibration. Older builds incorrectly
+used the saved **Interact click point** (`shop.center`) to check the locked cursor.
+An Interact point away from the window centre could reject working Shift Lock.
+The check now uses the game window's centre independently, and a failed startup
+returns to idle so F2 can start another attempt.
+
+Keep Interact on the actual prompt; do **not** change its Y coordinate to `0.5107`
+just to pass this check. If you already applied that workaround, recalibrate the
+Interact point to its real location. Other saved calibration stays valid.
+
+If verification still fails, check focus, input permissions, and Roblox's
+**Shift Lock Switch**. Leave the current lock **OFF** before F2. A stationary
+cursor already at the centre cannot prove a successful toggle; move it away
+while the run is stopped and the lock is off. The failure log includes cursor
+positions before/after, expected centre, and tolerance. Include these in a report.
+
 | Symptom | Likely cause |
 |---|---|
 | **Bar tracks the fish then drifts to one side and gives up; F2/F4 dead** | **Not running as administrator.** Roblox is elevated and the macro isn't, so Windows drops its input. Open an Administrator terminal and run `python easy_run.py`. This is the #1 cause of "it gives up on the fish". |

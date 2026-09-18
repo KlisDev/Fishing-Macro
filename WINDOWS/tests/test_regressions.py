@@ -163,7 +163,8 @@ class VisionRegressionTests(unittest.TestCase):
 
         engine = FakeEngine()
         engine.cfg.shop.enter_stance_on_start = False
-        with mock.patch.object(engine_mod, "focus_game_window", return_value=True) as focus:
+        with mock.patch.object(engine_mod, "focus_game_window", return_value=True) as focus, \
+             mock.patch.object(shop, "enter_fishing_stance", return_value=True):
             engine_mod.FishingEngine._run_locked(engine)
 
         focus.assert_called_once_with(engine.cfg.window_title)
