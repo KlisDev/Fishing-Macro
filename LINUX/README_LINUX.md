@@ -55,7 +55,7 @@ Controls in the **GUI Run Console**:
 
 F8 uses an X11 Shape overlay with an empty input region. It is click-through
 and clips its drawing outside protected detector regions so it cannot steal
-Sober input or colour the pixels the macro reads. If the X server lacks the
+Sober input or color the pixels the macro reads. If the X server lacks the
 Shape extension, F8 keeps the diagnostic log and reports that visible hitboxes
 are unavailable instead of opening an unsafe opaque overlay.
 
@@ -70,8 +70,14 @@ Linux never reuses Windows calibration or capture output:
 
 The copied pictures are only examples. Replace them with Sober-specific
 screenshots whenever the Android layout differs; doing so does not affect
-Windows. Calibration positions, detector regions, colour samples, templates,
+Windows. Calibration positions, detector regions, color samples, templates,
 and saved setup values are isolated in the Linux profile for the same reason.
+
+Calibration includes **Zoom screenshot** and **Zoom reference** inspectors.
+Scroll over the image to zoom; drag to pan; use Fit, 1:1, or Escape.
+These are read-only views of the original images. Move calibration controls
+and sample colors only in the main calibration workspace. Re-shoot closes
+the inspector before capture. No extra Linux dependency is required.
 
 ## Terminal run
 

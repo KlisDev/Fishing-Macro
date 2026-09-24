@@ -110,6 +110,19 @@ matters.
 * **▭ areas** — drag inside to move, drag the white corner to resize.
 * **⦿ click points** — drag the dot onto the button.
 
+### Inspect small details with zoom
+
+Click **Zoom screenshot** above the captured image, or **Zoom reference** for
+the selected example. You can also click the reference thumbnail. Scroll over
+the image to zoom around your pointer; drag to pan. **Fit** shows the whole
+image, **1:1** shows source pixels at native size, and **Escape** closes it.
+The screenshot inspector can show or hide the selected calibration outline.
+
+Both inspectors are **view-only**: zooming, panning, and clicking cannot edit
+calibration, mark an item reviewed, or sample a color. Close the inspector to
+adjust controls in the normal workspace. Re-shoot closes it before capturing
+a new screenshot. A tiny reference image will still look pixelated when enlarged.
+
 ### Update 30: NPC menus now fall into place
 
 The Fisherman's new dark button stack falls as pages gain or lose choices. The

@@ -2,7 +2,7 @@
 
 An auto-fisher for the Blox Fruits fishing minigame. It reads the screen, plays
 the reel minigame, buys bait when it runs low, and sells the catch — driven by
-what's on screen (colours and shapes), not fixed timings, so it adapts to
+what's on screen (colors and shapes), not fixed timings, so it adapts to
 different rods, lighting and times of day.
 
 The project is split by platform:

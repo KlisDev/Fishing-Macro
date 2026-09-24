@@ -87,6 +87,7 @@ except ImportError:                                # noqa: BLE001
 from bloxfish.config import Config, COOLDOWNS, VERSION  # noqa: E402
 from bloxfish.engine import FishingEngine          # noqa: E402
 from bloxfish import vision                        # noqa: E402
+from image_inspector import ImageInspector         # noqa: E402
 
 try:
     import numpy as np
@@ -766,7 +767,7 @@ COLOR_GUIDES = {
     "zone": ("Click the green zone while the fish is inside it", "Avoid the fish tile and the dark track", "The swatch matches the green moving zone."),
     "zone_out": ("Click that same zone while it is grey", "Avoid grey scenery outside the reel", "The sample comes from the out-of-zone rail, not the dock."),
     "fish": ("Click the tile behind the fish while it is inside the zone", "Avoid the fish sprite itself", "The swatch comes from the square under the fish."),
-    "fish_out": ("Click the fish tile while the fish is outside the zone", "Avoid the fish sprite and the grey zone", "The swatch comes from the changed tile colour."),
+    "fish_out": ("Click the fish tile while the fish is outside the zone", "Avoid the fish sprite and the grey zone", "The swatch comes from the changed tile color."),
     "fish_tpl": ("Click the centre of the fish, then size the magenta crop around its tile", "Avoid leaving empty background inside the crop", "Green outline means the saved template is found on this screenshot."),
     "dialogue": ("Click a plain yellow part of the Update 30 catch-card header", "Avoid black letters and bright effects", "The swatch matches the wide yellow name strip."),
     "craft": ("Click a plain yellow part of the Craft button", "Avoid its text and the red Close button", "The swatch matches the yellow button used to confirm the craft window."),
@@ -870,12 +871,16 @@ def _blank_image():
     return _BLANK_IMG
 
 
+def _calib_image_path(key: str):
+    """One slot resolver shared by the thumbnail and full-resolution viewer."""
+    return ASSETS / "calib" / f"{CALIB_IMAGE_ALIASES.get(key, key)}.png"
+
+
 def _calib_image(key: str, width: int = 230):
     """Return a small cached, rounded reference image for the guide panel."""
     if Image is None or not key:
         return None
-    resolved = CALIB_IMAGE_ALIASES.get(key, key)
-    path = ASSETS / "calib" / f"{resolved}.png"
+    path = _calib_image_path(key)
     if not path.exists():
         return None
     # Include the file timestamp so a guide image the user replaces while the
@@ -942,6 +947,8 @@ class Calibrator(ctk.CTkToplevel):
         self.drag: tuple | None = None
         self.shapes: dict[str, dict] = {}
         self.scale = 1.0
+        self._inspector = None
+        self._reference_key = None
         # Review state is deliberately session-only. It survives Re-shoot so a
         # user can refresh the game image without redoing their checklist, but
         # it never enters config.json and resets when this window is closed.
@@ -998,7 +1005,7 @@ class Calibrator(ctk.CTkToplevel):
         self.progress.pack(pady=(5, 0))
         self.progress.set(0)
         self.color_progress_text = ctk.CTkLabel(
-            progress_area, text="0 / 10 colour samples reviewed",
+            progress_area, text="0 / 10 color samples reviewed",
             text_color="#d9b8ec", anchor="e",
             font=ctk.CTkFont(size=10, weight="bold"))
         self.color_progress_text.pack(anchor="e", pady=(8, 0))
@@ -1050,7 +1057,7 @@ class Calibrator(ctk.CTkToplevel):
         self._color_button_labels: dict[str, str] = {}
         hdr = ctk.CTkFrame(left, fg_color="transparent")
         hdr.pack(fill="x", pady=(16, 4), padx=5)
-        ctk.CTkLabel(hdr, text="OPTIONAL COLOUR SAMPLES", anchor="w",
+        ctk.CTkLabel(hdr, text="OPTIONAL COLOR SAMPLES", anchor="w",
                      font=ctk.CTkFont(size=11, weight="bold"),
                      text_color=COLOR_ACCENT).pack(side="left")
         for key, label, _desc in COLOR_ITEMS:
@@ -1062,7 +1069,7 @@ class Calibrator(ctk.CTkToplevel):
             row.pack(fill="x", padx=4, pady=2)
             self.color_buttons[key] = row
             self._color_button_labels[key] = f"SAMPLE   {label}"
-        ctk.CTkLabel(left, text="Optional: use a colour sample only when a normal detector misses your screen.",
+        ctk.CTkLabel(left, text="Optional: use a color sample only when a normal detector misses your screen.",
                      anchor="w", justify="left", text_color=MUTED,
                      font=ctk.CTkFont(size=10), wraplength=250).pack(fill="x", padx=9, pady=(7, 10))
 
@@ -1075,14 +1082,18 @@ class Calibrator(ctk.CTkToplevel):
         bar = ctk.CTkFrame(right, fg_color=BG_CARD, corner_radius=16,
                            border_width=1, border_color=BORDER)
         bar.grid(row=0, column=0, sticky="ew", pady=(0, 9))
+        bar.grid_columnconfigure(0, weight=1)
         context = ctk.CTkFrame(bar, fg_color="transparent")
-        context.pack(side="left", fill="x", expand=True, padx=15, pady=9)
+        context.grid(row=0, column=0, sticky="ew", padx=15, pady=(9, 0))
         ctk.CTkLabel(context, text="LIVE WORKSPACE", text_color=ACCENT, anchor="w",
                      font=ctk.CTkFont(size=10, weight="bold")).pack(anchor="w")
         self.hint = ctk.CTkLabel(context, text="1. Pick a control.  2. Align it on the screenshot.  3. Save when ready.",
-                                 text_color=MUTED, anchor="w",
+                                 text_color=MUTED, anchor="w", justify="left", wraplength=600,
                                  font=ctk.CTkFont(size=12, weight="bold"))
         self.hint.pack(anchor="w", pady=(1, 0))
+        context.bind("<Configure>", lambda e: self.hint.configure(wraplength=max(200, e.width)))
+        actions = ctk.CTkFrame(bar, fg_color="transparent")
+        actions.grid(row=1, column=0, sticky="e", padx=12, pady=(0, 9))
         # Calibrating against the wrong rectangle is silent and ruinous: every
         # number here is a fraction of the game window, so if we photographed
         # the whole desktop instead, the boxes you line up are stored against
@@ -1090,29 +1101,41 @@ class Calibrator(ctk.CTkToplevel):
         self.warn = ctk.CTkLabel(right, text="", text_color=DANGER,
                                  anchor="w", justify="left", wraplength=880,
                                  font=ctk.CTkFont(size=12, weight="bold"))
-        ctk.CTkButton(bar, text="Save calibration", width=142, height=34,
+        ctk.CTkButton(actions, text="Save calibration", width=142, height=34,
                       fg_color=ACCENT, hover_color=ACCENT_HOVER, text_color="#07111f",
                       font=ctk.CTkFont(size=12, weight="bold"),
-                      command=self.save).pack(side="right", padx=(7, 12), pady=9)
-        ctk.CTkButton(bar, text="Re-shoot", width=90, height=34,
+                      command=self.save).pack(side="right", padx=(7, 0))
+        ctk.CTkButton(actions, text="Re-shoot", width=90, height=34,
                       fg_color=BG_CARD_RAISED, hover_color="#203858",
                       border_width=1, border_color=BORDER, text_color=TEXT,
                       font=ctk.CTkFont(size=12, weight="bold"),
-                      command=self.shoot).pack(side="right", padx=(6, 0), pady=9)
-        ctk.CTkButton(bar, text="Reset selected", width=112, height=34,
+                      command=self.shoot).pack(side="right", padx=(6, 0))
+        ctk.CTkButton(actions, text="Reset selected", width=112, height=34,
                       fg_color=BG_CARD_RAISED, hover_color="#4c2a38",
                       border_width=1, border_color=BORDER, text_color=TEXT,
                       font=ctk.CTkFont(size=12, weight="bold"),
-                      command=self.reset_selected).pack(side="right", pady=9)
+                      command=self.reset_selected).pack(side="right")
 
         canvas_shell = ctk.CTkFrame(right, fg_color="#050d1a", corner_radius=18,
                                     border_width=1, border_color=BORDER)
         canvas_shell.grid(row=1, column=0, sticky="nsew")
-        canvas_shell.grid_rowconfigure(0, weight=1)
+        canvas_shell.grid_rowconfigure(1, weight=1)
         canvas_shell.grid_columnconfigure(0, weight=1)
+        inspect_bar = ctk.CTkFrame(canvas_shell, fg_color="transparent")
+        inspect_bar.grid(row=0, column=0, sticky="ew", padx=10, pady=(7, 0))
+        self.zoom_shot_btn = ctk.CTkButton(
+            inspect_bar, text="⌕  Zoom screenshot", width=150, height=28,
+            fg_color=BG_CARD_RAISED, hover_color="#203858", text_color=TEXT,
+            state="disabled", command=self._inspect_screenshot)
+        self.zoom_shot_btn.pack(side="left", padx=(0, 8))
+        self.zoom_ref_btn = ctk.CTkButton(
+            inspect_bar, text="⌕  Zoom reference", width=145, height=28,
+            fg_color=BG_CARD_RAISED, hover_color="#203858", text_color=TEXT,
+            state="disabled", command=self._inspect_reference)
+        self.zoom_ref_btn.pack(side="left")
         self.canvas = ctk.CTkCanvas(canvas_shell, bg="#08111f", highlightthickness=0,
                                     bd=0, cursor="crosshair")
-        self.canvas.grid(row=0, column=0, sticky="nsew", padx=6, pady=6)
+        self.canvas.grid(row=1, column=0, sticky="nsew", padx=6, pady=6)
         self.canvas.bind("<Button-1>", self._down)
         self.canvas.bind("<B1-Motion>", self._move)
         self.canvas.bind("<ButtonRelease-1>", self._up)
@@ -1158,6 +1181,12 @@ class Calibrator(ctk.CTkToplevel):
                                   justify="center", text_color=MUTED,
                                   font=ctk.CTkFont(size=11))
         self.d_img.pack(padx=10, pady=(0, 4))
+        self.d_img.bind("<Button-1>", lambda _e: self._inspect_reference())
+        self.reference_zoom_btn = ctk.CTkButton(
+            self.image_shell, text="⌕  Zoom reference", height=26,
+            fg_color=BG_CARD_RAISED, hover_color="#203858", text_color=TEXT,
+            state="disabled", command=self._inspect_reference)
+        self.reference_zoom_btn.pack(fill="x", padx=10, pady=(0, 3))
         self.d_img_note = ctk.CTkLabel(self.image_shell, text="Match the highlighted game element, not the cursor.",
                                        text_color=MUTED, justify="left", wraplength=210,
                                        font=ctk.CTkFont(size=10))
@@ -1311,9 +1340,9 @@ class Calibrator(ctk.CTkToplevel):
         color_count = sum(key in self._color_reviewed for key in self._color_keys)
         color_total = len(self._color_keys)
         self.color_progress.set(color_count / color_total if color_total else 0)
-        color_text = ("All optional colour samples reviewed"
+        color_text = ("All optional color samples reviewed"
                       if color_count == color_total else
-                      f"{color_count} / {color_total} colour samples reviewed")
+                      f"{color_count} / {color_total} color samples reviewed")
         self.color_progress_text.configure(
             text=color_text,
             text_color=SUCCESS if color_count == color_total else "#d9b8ec")
@@ -1324,13 +1353,13 @@ class Calibrator(ctk.CTkToplevel):
         """Populate the readable guide panel; no stored calibration is touched."""
         if advanced:
             do, avoid, check = COLOR_GUIDES.get(
-                key, ("Click the exact colour the detector should recognise.",
+                key, ("Click the exact color the detector should recognise.",
                       "Avoid text, borders, and animated effects.",
                       "The swatch matches the intended game element."))
-            purpose = f"Optional colour sample: {label}. It supplements the built-in detector for this computer."
-            mode = "OPTIONAL COLOUR SAMPLE"
+            purpose = f"Optional color sample: {label}. It supplements the built-in detector for this computer."
+            mode = "OPTIONAL COLOR SAMPLE"
             extra = ("Click once on a plain, stable part of the target. The pink overlay shows the pixels that match. "
-                     "Use Reset to return to the built-in colour. This does not move any click point or region.")
+                     "Use Reset to return to the built-in color. This does not move any click point or region.")
         else:
             guide = CALIB_GUIDES.get(key, {})
             purpose = guide.get("purpose", desc)
@@ -1356,7 +1385,10 @@ class Calibrator(ctk.CTkToplevel):
         self._guide_expanded = False
         self.guide_extra.grid_remove()
         self.help_btn.configure(text="Show detailed guide")
+        self._reference_key = image_key
         img = _calib_image(image_key)
+        for button in (self.zoom_ref_btn, self.reference_zoom_btn):
+            button.configure(state="normal" if img is not None else "disabled")
         if img is None:
             self.d_img.configure(image=_blank_image(), text="No reference image\nfor this control.")
             self.d_img_note.configure(text="Follow the Do this, Avoid, and Check instructions beside this panel.")
@@ -1451,6 +1483,45 @@ class Calibrator(ctk.CTkToplevel):
         pad = 16 if it["kind"] == "dot" else 8
         self.canvas.configure(cursor="fleur" if x0 - pad <= ev.x <= x1 + pad and y0 - pad <= ev.y <= y1 + pad else "crosshair")
 
+    # -- read-only inspection ---------------------------------------------
+    def destroy(self) -> None:
+        # Close transient viewers before tearing down their owner/widgets.
+        self._close_inspector()
+        super().destroy()
+
+    def _close_inspector(self) -> None:
+        viewer = getattr(self, "_inspector", None)
+        if viewer is not None and not viewer._closed:
+            viewer.destroy()
+        self._inspector = None
+
+    def _inspect_screenshot(self) -> None:
+        image = getattr(self, "_shot", None)
+        if image is None:
+            return
+        overlay = None
+        if self.sel and self.win is not None and self.scale > 0:
+            _title, _icon, color, spec = _group_of(self.sel)
+            if spec:
+                kind = spec[1]
+                pixels = (self._box_px(*self._fracs(spec)) if kind == "box"
+                          else self._dot_px(*self._fracs(spec)))
+                overlay = (kind, tuple(p / self.scale for p in pixels), color, spec[4])
+        self._close_inspector()
+        # A copy-only viewer receives no cfg, commit callback, or color sampler.
+        self._inspector = ImageInspector(self, image, "Screenshot snapshot", overlay)
+
+    def _inspect_reference(self) -> None:
+        key = getattr(self, "_reference_key", None)
+        if not key or Image is None:
+            return
+        try:
+            with Image.open(_calib_image_path(key)) as source:
+                self._close_inspector()
+                self._inspector = ImageInspector(self, source, f"Reference example · {key}")
+        except (OSError, ValueError) as exc:
+            self._set_interaction(f"Reference image could not be opened: {exc}", WARNING)
+
     # -- screenshot -------------------------------------------------------
     def shoot(self) -> None:
         """Grab the game with our own windows hidden.
@@ -1461,6 +1532,7 @@ class Calibrator(ctk.CTkToplevel):
         # Re-shoot changes only the screenshot. Keep the session checklist
         # intact, even if a redraw/selection handler runs while the windows
         # are temporarily hidden. This state is never written to Config.
+        self._close_inspector()  # Never photograph a floating zoom window.
         review_state = self._review_snapshot()
         from bloxfish.capture import Screen, find_game_window
         self.withdraw()
@@ -1495,6 +1567,7 @@ class Calibrator(ctk.CTkToplevel):
         if Image is None:
             return
         self._shot = Image.fromarray(shot[:, :, ::-1])
+        self.zoom_shot_btn.configure(state="normal")
         self._fit()
         self._restore_review_snapshot(review_state)
         self._update_progress()
@@ -1726,7 +1799,7 @@ class Calibrator(ctk.CTkToplevel):
                 COLOR_ACCENT)
         else:
             self._set_interaction(
-                "Click a plain part of the target. The magenta overlay previews the detector's colour match.",
+                "Click a plain part of the target. The magenta overlay previews the detector's color match.",
                 COLOR_ACCENT)
         self._style_nav()
         self.color_frame.grid()
@@ -1758,7 +1831,7 @@ class Calibrator(ctk.CTkToplevel):
         setattr(self.cfg.colors, f"cap_{self.pick}_on", True)
         self._refresh_color_ui()
         self._record_review(self.pick)
-        self._set_interaction("Colour sample captured. Magenta shows the pixels the detector now sees.", SUCCESS)
+        self._set_interaction("Color sample captured. Magenta shows the pixels the detector now sees.", SUCCESS)
         self.redraw()
 
     def _on_tol(self, v) -> None:
@@ -2772,7 +2845,7 @@ class App(ctk.CTk):
              "Screen detection can be confused by visuals that look like a bite, fish, zone, or chest. The common offenders are colorful cosmetics, auras, particles, and HUD content inside a too-wide detection box.",
              ("Use a plain avatar and avoid red/pink accessories or fruit auras near the character.",
               "Keep the bite-marker region away from the top-right player/bounty list.",
-              "If night or unusual colors make the reel unreliable, use the optional colour samples or Zone track only after normal calibration."),
+              "If night or unusual colors make the reel unreliable, use the optional color samples or Zone track only after normal calibration."),
              "Do not place cosmetic effects, bright particles, or unrelated HUD elements inside the areas the macro watches.",
              "The detection regions contain the intended game element and little else; no constant aura crosses the avatar or reel view.",
              None, False),
