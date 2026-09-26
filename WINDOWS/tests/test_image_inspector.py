@@ -18,7 +18,7 @@ import customtkinter as ctk
 from bloxfish.capture import Rect
 from bloxfish.config import Config
 from image_inspector import ImageViewport, viewport_image, ImageInspector
-from easy_run import Calibrator, _calib_image_path
+from easy_run import Calibrator, _calib_image_path, _calib_image
 
 REAL_SHOOT = Calibrator.shoot
 
@@ -65,6 +65,17 @@ class ViewportTests(unittest.TestCase):
     def test_reference_resolution_uses_existing_slot_aliases(self):
         self.assertEqual(_calib_image_path('menu_item3').name, 'menu_item3.png')
         self.assertNotEqual(_calib_image_path('craft_button'), _calib_image_path('craft'))
+
+    def test_portrait_reference_is_bounded_in_both_dimensions(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'portrait.png'
+            Image.new('RGB', (500, 3000)).save(path)
+            with mock.patch('easy_run._calib_image_path', return_value=path):
+                for width, height in ((230, 180), (420, 220), (420, 180)):
+                    rendered = _calib_image('portrait', width, height)
+                    rw, rh = rendered.cget('size')
+                    self.assertLessEqual(rw, width)
+                    self.assertEqual(rh, height)
 
 
 @unittest.skipUnless(os.environ.get('BLOXFISH_TEST_GUI') == '1', 'opt-in real Tk UI test')
@@ -222,7 +233,8 @@ class InspectorUITests(unittest.TestCase):
         self.pump()
         cal.geometry('1000x680')
         self.pump()
-        self.assertFalse(cal.image_shell.winfo_ismapped())
+        self.assertTrue(cal.image_shell.winfo_ismapped())
+        self.assertGreaterEqual(cal.canvas.winfo_height(), 330)
         self.assertTrue(cal.zoom_ref_btn.winfo_ismapped())
         def descendants(widget):
             for child in widget.winfo_children():
@@ -241,6 +253,41 @@ class InspectorUITests(unittest.TestCase):
             cal._inspect_reference()
         self.assertIsNone(cal._inspector)
         self.assertIn('could not be opened', cal._interaction)
+
+    def test_workspace_resize_scroll_and_zoom_preserve_calibration(self):
+        cal = self.cal
+        cal.select('craft_button')
+        cal._toggle_guide()
+        before = (asdict(self.cfg), cal._review_snapshot(), cal.sel, cal.pick)
+        for width, height in ((900, 520), (1000, 680), (1440, 900), (1440, 1000), (900, 520)):
+            with self.subTest(size=(width, height)):
+                cal.geometry(f'{width}x{height}+0+0')
+                self.pump()
+                self.assertGreaterEqual(cal.canvas.winfo_height(), 330)
+                self.assertTrue(cal.image_shell.winfo_ismapped())
+                for label in (cal.d_text, cal.d_avoid, cal.d_check):
+                    self.assertTrue(label.winfo_ismapped())
+                self.assertEqual(int(cal.image_shell.grid_info()['row']),
+                                 10 if width < 1150 or height < 780 else 0)
+                expected_height = max(380, min(560, height - 410))
+                self.assertEqual(cal.canvas_shell.cget('height'), expected_height)
+                self.assertTrue(cal._guide_expanded)
+                scroll = cal.workspace._parent_canvas
+                scroll.yview_moveto(0)
+                self.pump()
+                self.capture(f'layout-{width}x{height}-top.png', cal)
+                cal.canvas.event_generate('<MouseWheel>', delta=-120, x=40, y=40)
+                self.pump()
+                self.assertGreater(scroll.yview()[0], 0)
+                scroll.yview_moveto(1)
+                self.pump()
+                self.capture(f'layout-{width}x{height}-bottom.png', cal)
+                for button in (cal.zoom_shot_btn, cal.zoom_ref_btn):
+                    button.invoke()
+                    self.pump()
+                    self.assertFalse(cal._inspector._closed)
+                    cal._close_inspector()
+                self.assertEqual(before, (asdict(self.cfg), cal._review_snapshot(), cal.sel, cal.pick))
 
 
 if __name__ == '__main__':

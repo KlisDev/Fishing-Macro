@@ -26,7 +26,7 @@ Locate these pieces in the destination project before editing:
 - The source reference-image path resolver, including aliases and platform overrides.
 - Screenshot capture, save, reset, drag/resize, color sampling, and review tracking.
 - The parent window's close behavior and any global mouse-wheel bindings.
-- Compact-layout behavior: reference thumbnails may be hidden on small windows.
+- Compact-layout behavior: keep reference thumbnails reachable by scrolling.
 
 In this project those pieces are in `WINDOWS/easy_run.py`, class `Calibrator`.
 `_shot` contains the source screenshot; `scale` belongs to the editable canvas.
@@ -125,7 +125,22 @@ The implementation changes in `easy_run.py` are deliberately localized:
 9. Close the viewer at the start of `shoot()`, before hiding windows/capturing.
 10. Close it before destroying the parent calibration window.
 
-The toolbar remains visible when compact layout hides the reference-image card.
+As of version 1.8.1.1.40, the right workspace is a `CTkScrollableFrame` using
+`speed_scroll`. The screenshot shell disables geometry propagation and keeps
+a logical height of `max(380, min(560, window_height - 410))`. Update this height
+before the compact-mode early return on every window resize. The screenshot's
+own canvas remains an ordinary editing canvas with its original event bindings.
+
+Compact mode moves the reference to row 10 below the instructions; spacious mode
+restores row 0, column 1, spanning eight rows. Keep descriptions, warnings, and
+checks visible in both modes. Wrap guidance to the available logical width.
+Thumbnail bounds are 420×220 in compact mode and 230×180 otherwise, using Pillow
+`thumbnail` to limit both dimensions. Include both dimensions in the cache key.
+Refresh only the reference when mode changes; do not reselect the tool or reset
+an expanded guide. The initial window uses display-aware sizing with a 900×520
+minimum, accounting for CustomTkinter scaling when measuring display dimensions.
+
+The zoom toolbar and reference button remain available through workspace scrolling.
 Visual testing also found that the existing instruction line could consume the
 space needed by Save, Re-shoot, and Reset. Those actions now occupy their own row,
 and the instruction wraps to the available width. Preserve this separation when
@@ -205,12 +220,17 @@ bundled/custom runtimes may require their own `TCL_LIBRARY` and `TK_LIBRARY` pat
 
 ### Verification performed for this patch
 
-All **100 tests passed** on Windows, including the opt-in real-Tk tests, with
+All **102 tests passed** on Windows after the 1.8.1.1.40 scaling update,
+including the opt-in real-Tk tests, with
 synthetic images and no game input. `git diff --check` also passed.
 The full suite includes the existing Windows and mocked Linux platform regressions.
 Actual screenshots of the screenshot inspector, reference inspector, and compact
 calibrator were reviewed for spacing, controls, colors, and clipped content.
 The compact header and initial fit were refined after those checks.
+The scrolling layout was also exercised and visually inspected at 900×520,
+1000×680, and 1440×900. Tests additionally resize within spacious mode, verify
+portrait thumbnail limits, exercise both zoom buttons and workspace scrolling,
+and confirm that calibration, selection, expanded guidance, and reviews persist.
 
 Live Roblox calibration and a live Linux/Sober desktop were not exercised.
 Linux wheel events were generated in the Windows Tk tests, which verifies event

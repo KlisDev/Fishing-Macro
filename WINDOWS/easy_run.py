@@ -876,7 +876,7 @@ def _calib_image_path(key: str):
     return ASSETS / "calib" / f"{CALIB_IMAGE_ALIASES.get(key, key)}.png"
 
 
-def _calib_image(key: str, width: int = 230):
+def _calib_image(key: str, width: int = 230, height: int = 180):
     """Return a small cached, rounded reference image for the guide panel."""
     if Image is None or not key:
         return None
@@ -885,25 +885,22 @@ def _calib_image(key: str, width: int = 230):
         return None
     # Include the file timestamp so a guide image the user replaces while the
     # Calibrate window is still open is refreshed on the next selection.
-    # Keep just one rendered variant per path/width to avoid accumulating old
+    # Keep just one rendered variant per path/size to avoid accumulating old
     # images during a calibration session.
     try:
         modified = path.stat().st_mtime_ns
     except OSError:
         return None
-    cache_key = (str(path), width, modified)
+    cache_key = (str(path), width, height, modified)
     if cache_key in _CALIB_IMAGE_CACHE:
         return _CALIB_IMAGE_CACHE[cache_key]
     for stale_key in tuple(_CALIB_IMAGE_CACHE):
-        if stale_key[:2] == cache_key[:2]:
+        if stale_key[:3] == cache_key[:3]:
             _CALIB_IMAGE_CACHE.pop(stale_key, None)
     try:
         with Image.open(path) as source:
             img = source.convert("RGBA")
-        h = max(1, int(img.height * width / img.width))
-        if img.width > width:
-            resampling = getattr(Image, "Resampling", Image).LANCZOS
-            img.thumbnail((width, h), resampling)
+        img.thumbnail((width, height), Image.Resampling.LANCZOS)
         try:
             from PIL import ImageDraw
             mask = Image.new("L", img.size, 0)
@@ -936,8 +933,11 @@ class Calibrator(ctk.CTkToplevel):
         super().__init__(master)
         self.title("Calibrate")
         self.cfg = cfg
-        self.geometry("1440x900")
-        self.minsize(980, 640)
+        screen_width = int(self._reverse_window_scaling(self.winfo_screenwidth()))
+        screen_height = int(self._reverse_window_scaling(self.winfo_screenheight()))
+        self.geometry(f"{max(900, min(1440, screen_width - 60))}x"
+                      f"{max(520, min(900, screen_height - 100))}")
+        self.minsize(900, 520)
         self.configure(fg_color=APP_BG)
         self.master_app = master
         self.sel: str | None = None
@@ -1074,10 +1074,13 @@ class Calibrator(ctk.CTkToplevel):
                      font=ctk.CTkFont(size=10), wraplength=250).pack(fill="x", padx=9, pady=(7, 10))
 
         # ---- right: canvas + details ------------------------------------
-        right = ctk.CTkFrame(outer, fg_color="transparent")
+        right = ctk.CTkScrollableFrame(
+            outer, fg_color="transparent", corner_radius=0,
+            scrollbar_button_color="#345074", scrollbar_button_hover_color=ACCENT_HOVER)
+        self.workspace = right
         right.grid(row=1, column=1, sticky="nsew")
-        right.grid_rowconfigure(1, weight=1)
         right.grid_columnconfigure(0, weight=1)
+        speed_scroll(right)
 
         bar = ctk.CTkFrame(right, fg_color=BG_CARD, corner_radius=16,
                            border_width=1, border_color=BORDER)
@@ -1091,7 +1094,8 @@ class Calibrator(ctk.CTkToplevel):
                                  text_color=MUTED, anchor="w", justify="left", wraplength=600,
                                  font=ctk.CTkFont(size=12, weight="bold"))
         self.hint.pack(anchor="w", pady=(1, 0))
-        context.bind("<Configure>", lambda e: self.hint.configure(wraplength=max(200, e.width)))
+        context.bind("<Configure>", lambda e: self.hint.configure(
+            wraplength=max(200, context._reverse_widget_scaling(e.width))))
         actions = ctk.CTkFrame(bar, fg_color="transparent")
         actions.grid(row=1, column=0, sticky="e", padx=12, pady=(0, 9))
         # Calibrating against the wrong rectangle is silent and ruinous: every
@@ -1116,9 +1120,11 @@ class Calibrator(ctk.CTkToplevel):
                       font=ctk.CTkFont(size=12, weight="bold"),
                       command=self.reset_selected).pack(side="right")
 
-        canvas_shell = ctk.CTkFrame(right, fg_color="#050d1a", corner_radius=18,
+        canvas_shell = ctk.CTkFrame(right, height=380, fg_color="#050d1a", corner_radius=18,
                                     border_width=1, border_color=BORDER)
-        canvas_shell.grid(row=1, column=0, sticky="nsew")
+        self.canvas_shell = canvas_shell
+        canvas_shell.grid(row=1, column=0, sticky="ew")
+        canvas_shell.grid_propagate(False)
         canvas_shell.grid_rowconfigure(1, weight=1)
         canvas_shell.grid_columnconfigure(0, weight=1)
         inspect_bar = ctk.CTkFrame(canvas_shell, fg_color="transparent")
@@ -1180,7 +1186,7 @@ class Calibrator(ctk.CTkToplevel):
         self.d_img = ctk.CTkLabel(self.image_shell, text="Choose a tool\nto see an example.",
                                   justify="center", text_color=MUTED,
                                   font=ctk.CTkFont(size=11))
-        self.d_img.pack(padx=10, pady=(0, 4))
+        self.d_img.pack(fill="both", expand=True, padx=10, pady=(0, 4))
         self.d_img.bind("<Button-1>", lambda _e: self._inspect_reference())
         self.reference_zoom_btn = ctk.CTkButton(
             self.image_shell, text="⌕  Zoom reference", height=26,
@@ -1238,6 +1244,7 @@ class Calibrator(ctk.CTkToplevel):
                         text="Use this optional region to read the reel track. Turn it on only after the box tightly frames the rail and progress strip.").grid(row=0, column=0,
                                                           sticky="w")
 
+        det.bind("<Configure>", self._resize_guide_width, add=True)
         self._update_progress()
         self.after(40, self._resize_calibration_layout)
         self.after(250, self.shoot)
@@ -1252,25 +1259,43 @@ class Calibrator(ctk.CTkToplevel):
             pass
 
     def _resize_calibration_layout(self, event=None) -> None:
-        """Prioritize the editable screenshot when the window is compact."""
+        """Keep a usable screenshot; scroll all guidance on compact displays."""
         if event is not None and event.widget is not self:
             return
         if not hasattr(self, "image_shell"):
             return
-        compact = self.winfo_height() < 780 or self.winfo_width() < 1150
+        height = self._reverse_window_scaling(self.winfo_height())
+        width = self._reverse_window_scaling(self.winfo_width())
+        preview_height = max(380, min(560, height - 410))
+        if self.canvas_shell.cget("height") != preview_height:
+            self.canvas_shell.configure(height=preview_height)
+        compact = height < 780 or width < 1150
         if compact == self._compact_calibration:
             return
         self._compact_calibration = compact
         if compact:
-            self.image_shell.grid_remove()
-            self.d_text.grid_remove()
-            self.d_avoid.grid_remove()
-            self.d_check.grid_remove()
+            self.image_shell.grid_configure(
+                row=10, column=0, columnspan=2, rowspan=1,
+                sticky="ew", padx=16, pady=(0, 13))
         else:
-            self.image_shell.grid()
-            self.d_text.grid()
-            self.d_avoid.grid()
-            self.d_check.grid()
+            self.image_shell.grid_configure(
+                row=0, column=1, columnspan=1, rowspan=8,
+                sticky="nsew", padx=(8, 14), pady=14)
+        self._refresh_reference()
+        self._resize_guide_width()
+
+    def _resize_guide_width(self, event=None) -> None:
+        if not hasattr(self, "guide_extra"):
+            return
+        detail = self.d_text.master
+        width = detail._reverse_widget_scaling(detail.winfo_width())
+        text_width = max(200, width - (32 if self._compact_calibration else 300))
+        for label in (self.d_title, self.d_text, self.d_do, self.d_avoid,
+                      self.d_check, self.coord_preview):
+            label.configure(wraplength=text_width)
+        self.guide_extra.configure(wraplength=max(200, width - 32))
+        self.warn.configure(wraplength=max(200, width - 32))
+        self.d_img_note.configure(wraplength=400 if self._compact_calibration else 210)
 
     # -- guide, status and reset controls --------------------------------
     def _guide_line(self, master, row: int, heading: str, text: str, color: str):
@@ -1386,7 +1411,12 @@ class Calibrator(ctk.CTkToplevel):
         self.guide_extra.grid_remove()
         self.help_btn.configure(text="Show detailed guide")
         self._reference_key = image_key
-        img = _calib_image(image_key)
+        self._refresh_reference()
+
+    def _refresh_reference(self) -> None:
+        """Resize the existing example without selecting or reviewing a tool."""
+        width, height = (420, 220) if self._compact_calibration else (230, 180)
+        img = _calib_image(self._reference_key, width, height)
         for button in (self.zoom_ref_btn, self.reference_zoom_btn):
             button.configure(state="normal" if img is not None else "disabled")
         if img is None:

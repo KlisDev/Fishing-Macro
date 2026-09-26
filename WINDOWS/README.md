@@ -112,6 +112,11 @@ matters.
 
 ### Inspect small details with zoom
 
+The calibration window fits the display initially and can be reduced to 900×520.
+Scroll the right workspace to reach all instructions and reference examples;
+the screenshot keeps a usable height. On smaller windows, the reference moves
+below the instructions instead of disappearing. Resizing does not reset reviews.
+
 Click **Zoom screenshot** above the captured image, or **Zoom reference** for
 the selected example. You can also click the reference thumbnail. Scroll over
 the image to zoom around your pointer; drag to pan. **Fit** shows the whole
