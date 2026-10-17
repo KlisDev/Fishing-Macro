@@ -94,6 +94,7 @@ class GuideTests(unittest.TestCase):
         config = (ROOT / "WINDOWS/bloxfish/config.py").read_text(encoding="utf-8")
         version = re.search(r'^VERSION = "([^"]+)"', config, re.M).group(1)
         self.assertIn(f"Version {version}", self.content)
+        self.assertIn(f"This guide describes <strong>{version}</strong>", self.content)
         self.assertIn(r"python .\WINDOWS\easy_run.py", self.content)
         self.assertIn("python3 LINUX/easy_run_linux.py", self.content)
         self.assertIn("sudo bash LINUX/install-udev.sh", self.content)
@@ -109,6 +110,17 @@ class GuideTests(unittest.TestCase):
             self.assertIn(target, self.parser.ids)
         self.assertIn("<noscript>", self.content)
         self.assertNotIn("\u2014", self.content)
+
+    def test_release_fixes_have_searchable_answers_and_honest_limits(self):
+        answers = {faq["id"]: faq for faq in self.parser.faqs}
+        self.assertEqual(answers["faq-reel-width"]["data-category"], "reel")
+        self.assertEqual(answers["faq-restock-stuck"]["data-category"], "bait")
+        self.assertIn("53", answers["faq-reel-width"]["data-search"])
+        self.assertIn("55", answers["faq-restock-stuck"]["data-search"])
+        self.assertIn("release-1821", self.parser.ids)
+        self.assertIn("Existing configs remain compatible", self.content)
+        self.assertIn("not live-confirmed as resolved", self.content)
+        self.assertIn("not live Roblox or Sober certification", self.content)
 
 
 if __name__ == "__main__":

@@ -10,9 +10,26 @@ The detector, Update 30 NPC logic, safety watchdog, calibration workflow, and
 all four GUI pages are shared with the Windows build; Linux replaces only the
 window, focus, input, runtime-profile, and F8-overlay layers.
 
-## Current shared fix: 1.8.1.1.44
+## Shared core in 1.8.2.1
 
-Both Linux launchers use the same 1.8.1.1.44 core and version as Windows.
+Both Linux launchers use the same core and version as Windows. Release
+1.8.2.1 includes the reel-width and bait-restock corrections below.
+
+The issue #53 correction measures the full reel width while its empty progress
+section is still dim, instead of locking onto the bright filled section. It
+also keeps low-progress reels present during that fade. These shared detector
+changes apply to Sober automatically. No config reset is required. Keep both
+ends of the track and the progress strip inside the calibrated search area.
+See [the reproduction and tests](../WINDOWS/docs/ISSUE_53_REEL_WIDTH.md).
+
+The issue #55 correction also uses this shared core: it distinguishes the
+Craft action from the Fisherman name banner, keeps hovered NPC rows visible
+to detection, gives page rendering and settling separate bounded budgets,
+and verifies each purchase before crediting bait. See
+[the restock investigation](../WINDOWS/docs/ISSUE_55_BAIT_RESTOCK.md).
+
+Earlier NPC and F8 corrections remain included:
+
 NPC rows require visible label/icon evidence; plain dark scenery cannot count
 as an open menu. Each action retry rechecks its source page, and a failed
 capture cannot confirm that dialogue closed. Optional catch-dialogue color

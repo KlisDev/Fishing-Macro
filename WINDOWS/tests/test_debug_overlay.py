@@ -100,6 +100,46 @@ class WindowsOverlayTests(unittest.TestCase):
             self.assertEqual(set(self.root.winfo_children()), before)
             bus.disarm()
 
+    def test_nested_reel_frames_and_markers_do_not_paint_into_search_capture(self):
+        import ctypes
+        from ctypes import wintypes
+        from bloxfish.capture import Rect
+        self.user32.GetDC.argtypes = [wintypes.HWND]
+        self.user32.GetDC.restype = wintypes.HDC
+        self.user32.ReleaseDC.argtypes = [wintypes.HWND, wintypes.HDC]
+        self.user32.ReleaseDC.restype = ctypes.c_int
+        gdi = ctypes.WinDLL('gdi32', use_last_error=True)
+        gdi.GetPixel.argtypes = [wintypes.HDC, ctypes.c_int, ctypes.c_int]
+        gdi.GetPixel.restype = wintypes.DWORD
+        self.user32.LogicalToPhysicalPointForPerMonitorDPI.argtypes = [
+            wintypes.HWND, ctypes.POINTER(wintypes.POINT)]
+        self.user32.LogicalToPhysicalPointForPerMonitorDPI.restype = wintypes.BOOL
+        x, y = self.root.winfo_rootx()+180, self.root.winfo_rooty()+120
+        wrapper = self.user32.GetParent(self.root.winfo_id())
+        self.pump()
+        dc = self.user32.GetDC(None)
+        def pixel(px, py):
+            # Tk/window hit testing uses logical coordinates on an unaware
+            # test process; the screen DC's pixels are physical at 200% DPI.
+            point = wintypes.POINT(px, py)
+            self.assertTrue(self.user32.LogicalToPhysicalPointForPerMonitorDPI(
+                wrapper, ctypes.byref(point)))
+            return gdi.GetPixel(dc, point.x, point.y)
+        try:
+            before = pixel(x, y)
+            self.assertEqual(before, 0x805020)  # owned test window's blue background
+            self.overlay = OverlayRenderer(self.root)
+            self.overlay.box('reel bar band', Rect(x-100, y-70, 240, 140))
+            # This smaller frame's right edge and its click dot are inside
+            # the larger capture, like a stale partial reel measurement.
+            self.overlay.box('reel bar', Rect(x-80, y-40, 76, 80))
+            self.overlay.dot('old click', x, y)
+            self.pump()
+            for dx, dy in ((0,0), (-1,0), (1,0), (0,10), (0,-10)):
+                self.assertEqual(pixel(x+dx, y+dy), before)
+        finally:
+            self.user32.ReleaseDC(None, dc)
+
     def test_close_cancels_refresh_and_repeated_f8_leaves_no_windows(self):
         before = set(self.root.winfo_children())
         for _ in range(3):

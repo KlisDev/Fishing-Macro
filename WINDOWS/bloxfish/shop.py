@@ -641,7 +641,10 @@ def wait_for_menu_page(engine, page: str, timeout: float, *,
     if expected is None:
         raise ShopError(f"unknown menu page {page!r}")
     poll = max(0.03, engine.cfg.shop.poll)
-    deadline = time.perf_counter() + timeout
+    # Rendering may consume the whole transition timeout. Settling is an
+    # additional bounded observation window, not part of that render budget.
+    settle = max(0.0, engine.cfg.shop.menu_page_settle)
+    deadline = time.perf_counter() + max(0.0, timeout) + settle
     # The caller immediately after a successful transition already owns a
     # complete, settled proof for this exact page. Re-paying the full settle
     # time made buy and sell wait twice on every page.
@@ -654,8 +657,8 @@ def wait_for_menu_page(engine, page: str, timeout: float, *,
         _clear_menu_page_witness(engine)
     stable_since: float | None = None
     stable_signature: tuple | None = None
-    settle = max(0.0, engine.cfg.shop.menu_page_settle)
     observed_counts: set[int] = set()
+    longest_stable = 0.0
     while time.perf_counter() < deadline:
         if not engine._alive():
             return False
@@ -678,6 +681,8 @@ def wait_for_menu_page(engine, page: str, timeout: float, *,
             elif stable_since is not None and now - stable_since >= settle:
                 engine._menu_page_witness = (page, signature)
                 return True
+            if stable_since is not None:
+                longest_stable = max(longest_stable, now - stable_since)
         else:
             stable_since = None
             stable_signature = None
@@ -687,7 +692,8 @@ def wait_for_menu_page(engine, page: str, timeout: float, *,
         counts = "/".join("unavailable" if count < 0 else str(count)
                           for count in sorted(observed_counts)) or "none"
         log(f"[shop] {page} page not confirmed: expected {expected} settled rows; "
-            f"observed {counts} — check that the NPC menu area includes every action row")
+            f"observed {counts}; longest stable {longest_stable:.2f}s / {settle:.2f}s "
+            "required - check that the NPC menu area includes every action row")
     return False
 
 
@@ -952,6 +958,47 @@ def _wait_dialogue_closed(engine, timeout: float) -> bool:
     return False
 
 
+def _confirm_craft_purchase(engine, click, *, tries: int, wait: float) -> bool:
+    """Send Craft only while its button is present, then prove it stays gone.
+
+    A pre-click missing frame is not a purchase. Neither is a one-frame fade
+    or failed capture. Retry only if the real Craft button is still visible;
+    never repeat that click over the returned NPC page.
+    """
+    def observe():
+        try:
+            return craft_up(engine)
+        except Exception as exc:
+            DEBUG.event("craft", "observation unavailable", error=str(exc))
+            return None
+
+    poll = max(.03, engine.cfg.shop.poll)
+    for _ in range(max(1, tries)):
+        if not engine._alive():
+            return False
+        if observe() is not True:
+            engine.log("[shop] Craft button not verified before confirmation; no click sent")
+            return False
+        _clear_menu_page_witness(engine)
+        click()
+        deadline = time.perf_counter() + wait
+        absent_since = None
+        while time.perf_counter() < deadline:
+            if not engine._alive():
+                return False
+            visible = observe()
+            now = time.perf_counter()
+            if visible is False:
+                if absent_since is None:
+                    absent_since = now
+                elif now - absent_since >= .24:
+                    return True
+            else:
+                absent_since = None
+            time.sleep(poll)
+    return False
+
+
 def leave_dialogue(engine, tries: int = 3) -> bool:
     """Get out of the NPC dialogue from whatever page we are on.
 
@@ -1042,7 +1089,7 @@ def buy(engine, amount: int, first_time: bool = False) -> bool:
             engine._sleep(pause)
 
     def fail(why: str) -> bool:
-        log(f"[shop] FAILED: {why} — no bait bought")
+        log(f"[shop] FAILED: {why} - bait purchase not confirmed")
         if not _recover(engine) or not engine._alive():
             engine.stop()
             return False
@@ -1082,17 +1129,19 @@ def buy(engine, amount: int, first_time: bool = False) -> bool:
         return fail("CRAFT window never opened")
 
     for _ in range(n_plus):                  # quantity: +10 each
+        if not engine._alive():
+            return False
         click(cfg.craft_plus, cfg.after_plus)
 
-    # The craft window closing is the one unambiguous "the bait is bought"
-    # signal, so it gets the same treatment.
-    if not _click_until(engine, lambda: click(cfg.craft_button, name="Craft"),
-                        lambda: not craft_up(engine), tries=4,
-                        wait=cfg.craft_timeout):
-        return fail("CRAFT window did not close — purchase unconfirmed")
+    # A verified Craft click followed by sustained closure is the available
+    # screen-based purchase acknowledgment, not an inventory readback.
+    if not _confirm_craft_purchase(
+            engine, lambda: click(cfg.craft_button, name="Craft"),
+            tries=4, wait=cfg.craft_timeout):
+        return fail("CRAFT confirmation failed")
 
-    # From here the bait IS bought. However messy the exit turns out to be, the
-    # purchase must still be credited: not doing so is what had the bot buying
+    # From here the purchase is acknowledged. However messy the exit is, it
+    # must still be credited: not doing so is what had the bot buying
     # over and over every few catches.
     if not leave_dialogue(engine):
         # The bait purchase is real, but fishing while an NPC menu may still be

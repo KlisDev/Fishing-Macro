@@ -9,10 +9,9 @@ Two renderers fed by one event bus:
     frames each detection box and rings each click, so they show up in a screen
     recording.  Platform launchers can register an equivalent renderer.
 
-The crucial safety property: the overlay draws each box's frame a few pixels
-*OUTSIDE* its detection rectangle. The macro reads the screen with `mss`, which
-would otherwise capture the overlay and corrupt detection; drawing outside the
-rect means the macro's own grabs never contain a single overlay pixel.
+The overlay draws frames outside their rectangles and clears the union of
+active capture rectangles after drawing. A small box's frame or a click marker
+must not leak into a larger search area and corrupt the pixels read by `mss`.
 
 The hot-path hooks (`DEBUG.box/click/event`) are a single attribute check when
 disarmed, so leaving them in the engine costs nothing in normal use.
@@ -280,6 +279,14 @@ class OverlayRenderer:
             self.canvas.create_oval(x - 2, y - 2, x + 2, y + 2, fill=col,
                                     outline="")
             self._label(x, y - 22, name, col, anchor="center")
+        # Outside one box can still be INSIDE a larger search box. Clear all
+        # detector interiors last so stale reel edges, labels and click dots
+        # cannot split the progress strip during the next width acquisition.
+        # KEY makes these pixels transparent to the desktop, not black.
+        for _name, (l, t, r, b, exp) in boxes:
+            if now <= exp:
+                self.canvas.create_rectangle(l, t, r, b, fill=self.KEY, outline="",
+                                             tags="capture-clear")
         self._tick_id = self.win.after(40, self._tick)
 
     def close(self) -> None:

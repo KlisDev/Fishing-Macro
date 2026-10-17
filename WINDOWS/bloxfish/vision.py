@@ -226,6 +226,48 @@ def progress_track_mask(img: np.ndarray) -> np.ndarray:
     return (g > b + 15) & (g > r + 15) & (g > 40)
 
 
+def _progress_width_mask(img: np.ndarray, strong: np.ndarray
+                         ) -> tuple[np.ndarray, np.ndarray]:
+    """Include the dim unfilled trough alongside a strong progress-strip seed.
+
+    During the reel's opening fade the empty section can be (12,18,13), far
+    darker than its settled (19,61,25). Measuring only the bright fill locks
+    the track to a fraction of its true width. Weak green is only an extension
+    of a sufficiently long strong strip; it cannot discover a bar by itself.
+    """
+    b, g, r = _split(img)
+    dim = ((g >= 12) & (g <= 90) & (b <= 40) & (r <= 45)
+           & (g >= b + 3) & (g >= r + 3))
+    # A captured cyan F8 edge may cross an old, shorter measurement. It is a
+    # narrow interruption only, never a seed. The black frame around the rail
+    # must still separate it from scenery outside the track.
+    cyan = (b > 100) & (g > 100) & (r < 120) & (np.abs(b - g) <= 40)
+    return strong | dim, cyan
+
+
+def _progress_span(strong: np.ndarray, width_mask: np.ndarray,
+                   interruption: np.ndarray, min_w: int) -> tuple[int, int] | None:
+    # Keep the original strong-strip seed and gap limit. Growing that limit
+    # with resolution also joins small scenery highlights outside the frame.
+    # Captured F8 interruptions are handled separately by the width mask.
+    seed = _row_span(strong)
+    if seed is None or seed[1] - seed[0] < min_w:
+        return None
+    # Do not bridge the dark border into dim scenery beyond the track. The
+    # strong seed above retains its established small-interruption tolerance.
+    gap = max(8, min(32, int(min_w * .04)))
+    closed = cv2.morphologyEx(width_mask.astype(np.uint8)[None, :], cv2.MORPH_CLOSE,
+                             np.ones((1, gap + 1), dtype=np.uint8))[0].astype(bool)
+    wider = _row_span(width_mask | (interruption & closed), max_gap=2)
+    if wider is not None and wider[0] <= seed[0] and wider[1] >= seed[1]:
+        # Progress fills from the left, so dim pixels may extend its right
+        # end, never move its known left edge into adjacent scenery/frames.
+        # A cyan border alone cannot add width beyond the last trough pixel.
+        xs = np.flatnonzero(width_mask[seed[0]:wider[1] + 1])
+        return seed[0], max(seed[1], seed[0] + int(xs[-1]))
+    return seed
+
+
 # --------------------------------------------------------------------------
 # bar location
 # --------------------------------------------------------------------------
@@ -289,6 +331,16 @@ def progress_bar_present(img: np.ndarray, min_w_frac: float = 0.5) -> bool:
     for y in range(pt.shape[0]):
         run = _longest_run(pt[y])
         if run and (run[1] - run[0]) >= need:
+            return True
+    # This crop was already identified as geo.prog, not an arbitrary search
+    # area. A dim empty half must not make a low-progress live fight look
+    # finished and trigger a rod flick. Still require a substantial bright
+    # seed; weak green alone cannot keep a vanished bar alive over scenery.
+    width_mask, interruption = _progress_width_mask(img, pt)
+    seed_width = max(3, int(img.shape[1] * min(.15, min_w_frac)))
+    for y in range(pt.shape[0]):
+        run = _progress_span(pt[y], width_mask[y], interruption[y], seed_width)
+        if run and run[1] - run[0] >= need:
             return True
     return False
 
@@ -381,8 +433,11 @@ def find_bar(img: np.ndarray, origin: tuple[int, int],
         return find_bar_by_strip(img, origin, colors, det, min_w, max_w)
 
     ptrack = progress_track_mask(img)
+    pwidth, overlay = _progress_width_mask(img, ptrack)
     tmask = track_mask(img, colors)
     fmask = fish_mask(img, colors)
+    barish = zone.astype(bool) | tmask | fmask
+    field_mask = zone_mask_tracking(img, colors) | tmask | fmask | chest_mask(img, colors)
 
     # Try each candidate band, biggest first. The first one with a real
     # progress bar under it wins.
@@ -411,20 +466,19 @@ def find_bar(img: np.ndarray, origin: tuple[int, int],
         best_run = None
         scan_to = min(h, band_bot + max(8, int((band_bot - band_top) * 0.9)))
         for y in range(band_bot + 1, scan_to):
-            run = _row_span(ptrack[y])
+            run = _progress_span(ptrack[y], pwidth[y], overlay[y], min_w)
             if run and (best_run is None
                         or (run[1] - run[0]) > (best_run[1] - best_run[0])):
                 best_run = run
 
         if best_run is not None and (best_run[1] - best_run[0]) >= min_w:
             x0, x1 = best_run
-            prog_rows = [y for y in range(band_bot + 1, min(h, band_bot + 40))
-                         if ptrack[y, x0:x1].mean() > 0.55]
+            prog_rows = [y for y in range(band_bot + 1, scan_to)
+                         if pwidth[y, x0:x1].mean() > 0.55]
         else:
             # No progress bar under this band. Fall back to the dark track on
             # the band's centre row — but only for *this* candidate.
             mid = (y_top + y_bot) // 2
-            barish = zone.astype(bool) | tmask | fmask
             run = _row_span(barish[mid])
             if not run or (run[1] - run[0]) < min_w:
                 continue                  # not the bar; try the next candidate
@@ -434,6 +488,10 @@ def find_bar(img: np.ndarray, origin: tuple[int, int],
         if zone_l < x0 or zone_r > x1 or (zone_r - zone_l) > (x1 - x0) * 0.9:
             continue
         if not (min_w <= (x1 - x0) <= max_w):
+            continue
+        # Extending a dim progress trough still needs a real deep playfield
+        # above it; weak green scenery cannot supply arbitrary extra width.
+        if field_mask[y_top:y_bot, x0:x1].mean() < .5:
             continue
 
         ox, oy = origin
@@ -482,6 +540,7 @@ def find_bar_by_strip(img: np.ndarray, origin: tuple[int, int], colors: Colors,
     """
     h, w = img.shape[:2]
     ptrack = progress_track_mask(img)
+    pwidth, overlay = _progress_width_mask(img, ptrack)
     tmask = track_mask(img, colors)
     zmask = zone_mask_tracking(img, colors)
     fmask = fish_mask(img, colors)
@@ -490,7 +549,7 @@ def find_bar_by_strip(img: np.ndarray, origin: tuple[int, int], colors: Colors,
     # Rows that carry a full-width two-tone run: the strip, and only the strip.
     runs: list[tuple[int, int, int]] = []
     for y in range(h):
-        r = _row_span(ptrack[y])
+        r = _progress_span(ptrack[y], pwidth[y], overlay[y], min_w)
         if r and (r[1] - r[0]) >= min_w:
             runs.append((y, r[0], r[1]))
     if not runs:
@@ -828,6 +887,45 @@ def _find_menu_panels(img: np.ndarray) -> list[MenuButton]:
     return panels if len(panels) >= 2 else []
 
 
+def _hovered_menu_backing(img: np.ndarray) -> np.ndarray:
+    """Only the bounded gray highlight of a hovered NPC action panel.
+
+    Hovering raises the background above the dark-label threshold. Accept it
+    only as a short neutral band with dark top/bottom borders, not as a general
+    relaxation for gray scenery. Labels are still required by the caller.
+    """
+    h, w = img.shape[:2]
+    mask = np.zeros((h, w), dtype=bool)
+    if h < 20 or w < 40:
+        return mask
+    b, g, r = _split(img)
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    light = ((gray >= 90) & (gray < 170)
+             & (np.maximum.reduce((b, g, r)) - np.minimum.reduce((b, g, r)) <= 45))
+    active = (light.sum(axis=1) >= max(30, int(w * .35))).astype(np.uint8)
+    active = cv2.morphologyEx(active[:, None], cv2.MORPH_CLOSE,
+                              np.ones((5, 1), dtype=np.uint8))[:, 0].astype(bool)
+    start = None
+    for y, on in enumerate(np.r_[active, False]):
+        if on and start is None:
+            start = y
+        elif not on and start is not None:
+            height = y - start
+            if max(12, int(h * .025)) <= height <= h * .4:
+                span = _row_span(light[start:y].mean(axis=0) >= .4)
+                if span is not None and span[1] - span[0] >= w * .35:
+                    left, right = span[0], span[1] + 1
+                    pad = max(5, int(height * .2))
+                    top = gray[max(0, start - pad):start, left:right]
+                    bottom = gray[y:min(h, y + pad), left:right]
+                    if (top.size and bottom.size
+                            and (top < 90).mean(axis=1).max() >= .5
+                            and (bottom < 90).mean(axis=1).max() >= .5):
+                        mask[start:y, left:right] = True
+            start = None
+    return mask
+
+
 def find_falling_menu_buttons(img: np.ndarray) -> list[MenuButton]:
     """Find the Update 30 NPC button stack without relying on a saved box.
 
@@ -854,6 +952,23 @@ def find_falling_menu_buttons(img: np.ndarray) -> list[MenuButton]:
     edge_back = cv2.cvtColor(img[:, w - 18:w], cv2.COLOR_BGR2GRAY) < 90
     edge_dark = cv2.blur(edge_back.mean(axis=1).astype(np.float32)[:, None],
                         (1, 35))[:, 0] >= .25
+    # A narrow ability HUD can leave some whole words after its clipped
+    # headings were rejected. Those words alone look like a two-action page.
+    # Suppress only their shared, persistent right-edge backing, and only
+    # when at least two separate clipped text bands identify that backing.
+    # Complete NPC labels elsewhere in the same capture remain eligible.
+    clipped = (edge_white & edge_dark).astype(np.uint8)
+    clipped = cv2.morphologyEx(clipped[:, None], cv2.MORPH_CLOSE,
+                               np.ones((5, 1), np.uint8))[:, 0].astype(bool)
+    transitions = np.diff(np.r_[False, clipped, False].astype(np.int8))
+    clipped_bands = np.flatnonzero(transitions == -1) - np.flatnonzero(transitions == 1)
+    hud_left = w
+    if np.count_nonzero(clipped_bands >= 3) >= 2:
+        persistent_dark = (cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) < 90).mean(axis=0) >= .75
+        while hud_left and persistent_dark[hud_left - 1]:
+            hud_left -= 1
+        if not (18 <= w - hud_left <= w * .45):
+            hud_left = w
     # The normal desktop UI is lower-right, but the supplied Update 30 footage
     # proves that Roblox's UI scale can make the exact same stack fill most of
     # the screen.  Scan the full possible panel region, then reject short
@@ -877,7 +992,10 @@ def find_falling_menu_buttons(img: np.ndarray) -> list[MenuButton]:
     # Actual label pixels sit between dark backing on their own scanline.
     enclosed = (np.maximum.accumulate(dark, axis=1) &
                 np.maximum.accumulate(dark[:, ::-1], axis=1)[:, ::-1])
-    white &= (dark_support >= 0.30) & enclosed
+    hovered = _hovered_menu_backing(img[y0:y1, x0:x1])
+    white &= ((dark_support >= 0.30) & enclosed) | hovered
+    if hud_left < w:
+        white[:, max(0, hud_left - x0):] = False
     counts = white.sum(axis=1)
     active = (counts >= max(7, int((x1 - x0) * 0.004))).astype(np.uint8)
     # Text has holes between glyphs. Join those vertically, but not separate
@@ -898,11 +1016,17 @@ def find_falling_menu_buttons(img: np.ndarray) -> list[MenuButton]:
             # A pointer over the last label extends its white band slightly.
             # Keep it eligible; regular row spacing below remains required.
             if h * 0.008 <= end - start <= h * 0.20:
+                ys, xs = np.where(white[start:end])
                 if np.count_nonzero(edge_white[y0 + start:y0 + end]
                                     & edge_dark[y0 + start:y0 + end]) >= 3:
-                    start = None
-                    continue
-                ys, xs = np.where(white[start:end])
+                    # A complete label well left of a locally removed HUD is
+                    # still usable at the same height. Do not exempt nearby
+                    # glyphs when only a thin sliver of that HUD was masked.
+                    clear_of_hud = (hud_left < w and len(xs)
+                                    and x0 + xs.max() < hud_left - max(12, int(w * .03)))
+                    if not clear_of_hud:
+                        start = None
+                        continue
                 # A player-list row can be white and evenly spaced too, but
                 # it is much narrower than even the shortest NPC action. This
                 # keeps the broad scan safe while allowing UI-scale changes.
@@ -997,12 +1121,25 @@ def craft_window_open(img: np.ndarray, min_w_frac: float = 0.25,
     The Craft button is low and central — clear of the usual window furniture —
     and it is the thing we are about to click anyway, so seeing it is the right
     precondition. Measured 302-304 px wide against a ~768 px band.
+
+    Update 30's yellow Fisherman name banner can occupy this same band after
+    crafting. It is long and thin, not a compact button; width alone kept the
+    window falsely "open" on the Basic Bait / Back page (issue #55).
     """
     m = craft_button_mask(img, c).astype(np.uint8)
     if not m.any():
         return False
     n, _lbl, stats, _c = cv2.connectedComponentsWithStats(m, 8)
-    return any(stats[i][2] > img.shape[1] * min_w_frac for i in range(1, n))
+    for x, y, width, height, area in stats[1:]:
+        # A horizontally clipped name banner can look like a compact button.
+        # Require both ends to be visible before trusting its aspect ratio.
+        # Top clipping remains supported by the existing lower-screen band.
+        if (x > 0 and x + width < img.shape[1]
+                and width > img.shape[1] * min_w_frac and height >= 4
+                and 1.5 <= width / height <= 8.0
+                and area >= width * height * .25):
+            return True
+    return False
 
 
 def dialogue_header_mask(img: np.ndarray, c: Colors | None = None) -> np.ndarray:

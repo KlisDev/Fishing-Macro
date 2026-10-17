@@ -2,7 +2,9 @@
 
 The root `GUIDE.html` adapts the layout of the creator's supplied
 `SharkmanV3-main/GUIDE.html`. Its fishing instructions were checked against
-the local shared core, version **1.8.1.1.44**, on **10 October 2026**.
+the local shared core, initially version **1.8.1.1.44** on **10 October 2026**.
+Release guidance was updated for **1.8.2.1** on **17 October 2026** after
+reviewing issues #53 and #55, recorded-image replays, and regression tests.
 
 The guide is a local HTML document, with inline CSS/JavaScript and no remote
 display assets. Search, category filters, answer links, command copying, native
@@ -112,6 +114,19 @@ community fork rather than a supported launcher.
 - Download warnings require investigation, not blanket false-positive advice.
 
 ## Updating the guide
+
+The 1.8.2.1 update adds searchable answers for partial reel width and a restock
+stuck on Basic Bait / Back, plus release notes, full-button calibration margins,
+purchase acknowledgment limits, and Windows F8 capture protection. Existing
+answer anchors are preserved. The supplied #53 recording reproduces the width
+defect; #55's exact intermittent run and reported camera turning are not
+live-confirmed, since that report has no attached profile or captures.
+
+Headless Chrome checks passed at 1440x900, 900x600, and 390x844: searching the
+new symptoms, opening answer links, collapsing answers, and filtering categories.
+Screenshots were inspected at desktop and phone sizes. No horizontal overflow,
+page script errors, or remote resource requests were found. These browser checks
+exercise the local guide only, not Roblox or Sober.
 
 Update its visible version and reviewed date with meaningful releases. Recheck
 page/action maps, setup fields, route enablement, stock bookkeeping, platform

@@ -88,6 +88,8 @@ class LinuxProfileTests(unittest.TestCase):
             "scene=np.full((350,420,3),100,dtype=np.uint8); "
             "scene[50:80,20:400]=150; scene[170:200,20:400]=150; "
             "dark=scene.copy(); dark[50:90,:]=30; dark[170:210,:]=30; "
+            "banner=np.zeros((151,384,3),dtype=np.uint8); "
+            "banner[130:151,88:299]=(30,190,225); "
             "cfg=config.Config(); cfg.shop.menu_left=cfg.shop.menu_top=0.; "
             "cfg.shop.menu_right=cfg.shop.menu_bottom=1.; "
             "probe=SimpleNamespace(cfg=cfg,window=Rect(0,0,420,350),"
@@ -98,6 +100,7 @@ class LinuxProfileTests(unittest.TestCase):
             "'sample_enabled':cfg.colors.cap_dialogue_on,"
             "'obsolete_count':vision.menu_button_count(scene),"
             "'dark_panel_rows':len(vision.find_falling_menu_buttons(dark)),"
+            "'banner_is_craft':vision.craft_window_open(banner),"
             "'current_count':shop.menu_items(probe),'dialogue':shop.in_dialogue(probe),"
             "'signature':shop._menu_page_signature(probe),"
             "'modules':[m.__file__ for m in (engine,shop,vision,routes,terminal_setup)]}))"
@@ -114,6 +117,7 @@ class LinuxProfileTests(unittest.TestCase):
         self.assertFalse(report['sample_enabled'])
         self.assertGreaterEqual(report['obsolete_count'], 2)
         self.assertEqual(report['dark_panel_rows'], 0)
+        self.assertFalse(report['banner_is_craft'])
         self.assertEqual(report['current_count'], 0)
         self.assertFalse(report['dialogue'])
         self.assertEqual(report['signature'], [])

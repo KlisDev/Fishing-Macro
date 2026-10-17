@@ -95,7 +95,50 @@ class NPCMenuDetectionTests(unittest.TestCase):
                 ('Shift', 263, 247), ('Heavenly Impact', 263, 318)):
             cv2.putText(image, text, (x, baseline), cv2.FONT_HERSHEY_SIMPLEX,
                         .9, (255, 255, 255), 2, cv2.LINE_AA)
-        self.assertEqual(vision.find_falling_menu_buttons(image), [])
+        for scale in (.75, 1.0, 1.5, 2.0):
+            with self.subTest(scale=scale):
+                resized = cv2.resize(image, None, fx=scale, fy=scale)
+                self.assertEqual(vision.find_falling_menu_buttons(resized), [])
+
+    def test_clipped_hud_does_not_hide_a_complete_menu_beside_it(self):
+        image = np.full((350, 720, 3), (230, 180, 70), dtype=np.uint8)
+        # A whole NPC stack shares the capture with the edge of the ability
+        # HUD. Some label bands overlap vertically, so rejecting the whole
+        # capture or every band containing a clipped glyph would lose rows.
+        image[25:340, 15:475] = 30
+        image[:, 565:] = 30
+        for text, baseline in zip(('Shop', 'Fishing Index', 'Job Stats', 'Nevermind'),
+                                  (73, 153, 233, 313)):
+            cv2.putText(image, text, (60, baseline), cv2.FONT_HERSHEY_SIMPLEX,
+                        .9, (255, 255, 255), 2, cv2.LINE_AA)
+        for text, x, baseline in (
+                ('Mastery 207', 617, 89), ('BUDDHA', 645, 164),
+                ('Shift', 574, 247), ('Heavenly Impact', 574, 318)):
+            cv2.putText(image, text, (x, baseline), cv2.FONT_HERSHEY_SIMPLEX,
+                        .9, (255, 255, 255), 2, cv2.LINE_AA)
+        for scale in (.75, 1.0, 1.5, 2.0):
+            with self.subTest(scale=scale):
+                rows = vision.find_falling_menu_buttons(
+                    cv2.resize(image, None, fx=scale, fy=scale))
+                self.assertEqual(len(rows), 4)
+                self.assertTrue(all(row.x < 475 * scale for row in rows))
+
+    def test_partial_hud_mask_does_not_exempt_other_clipped_words(self):
+        image = np.full((320, 409, 3), (230, 180, 70), dtype=np.uint8)
+        image[:, 255:] = 30
+        # A translucent upper area means the persistent dark column detects
+        # only a thin right sliver. Masking that sliver must not disable the
+        # existing clipped-glyph check for the rest of the HUD.
+        image[:130, 255:384] = 150
+        for text, x, baseline in (
+                ('Mastery 207', 306, 89), ('BUDDHA', 334, 164),
+                ('Shift', 263, 247), ('Heavenly Impact', 267, 318)):
+            cv2.putText(image, text, (x, baseline), cv2.FONT_HERSHEY_SIMPLEX,
+                        .9, (255, 255, 255), 2, cv2.LINE_AA)
+        for scale in (.75, 1.0, 1.5, 2.0):
+            with self.subTest(scale=scale):
+                resized = cv2.resize(image, None, fx=scale, fy=scale)
+                self.assertEqual(vision.find_falling_menu_buttons(resized), [])
 
     def test_bright_water_at_right_edge_keeps_complete_labels(self):
         image = np.full((350, 420, 3), 245, dtype=np.uint8)
